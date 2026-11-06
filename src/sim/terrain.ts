@@ -56,6 +56,28 @@ export function generateValley(w: number, h: number, seed: number): MapData {
     }
   }
 
+  // Hänge auf eine Stufe je Zelle begrenzen, damit Bewohner überall
+  // hinkommen. Die höhere Seite wird abgetragen, das Flussbett bleibt.
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        for (const j of [x + 1 < w ? i + 1 : -1, y + 1 < h ? i + w : -1]) {
+          if (j < 0) continue;
+          if (ground[j] > ground[i] + 1) {
+            ground[j] = ground[i] + 1;
+            changed = true;
+          } else if (ground[i] > ground[j] + 1) {
+            ground[i] = ground[j] + 1;
+            changed = true;
+          }
+        }
+      }
+    }
+  }
+
   // Quelle: ein kleiner Teich am Nordrand
   const sources: { index: number; rate: number }[] = [];
   const sx = Math.round(centerX(1));

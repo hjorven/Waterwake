@@ -80,6 +80,7 @@ describe('World', () => {
   it('ein Damm quer durchs Tal staut Wasser auf', () => {
     const open = World.generate(96, 96, 7);
     const dammed = World.generate(96, 96, 7);
+    dammed.freeBuild = true;
     // Damm über die ganze Breite in Zeile 50
     for (let x = 0; x < 96; x++) dammed.apply('damm', 50 * 96 + x, 6);
     for (let i = 0; i < 4000; i++) {
@@ -97,13 +98,14 @@ describe('World', () => {
 
   it('Dürre stoppt die Quellen', () => {
     const world = World.generate(64, 64, 3);
-    world.setWeather('duerre');
+    world.forceWeather('duerre');
     for (let i = 0; i < 100; i++) world.step();
     expect(world.water.added).toBe(0);
   });
 
   it('Werkzeuge ändern Gelände und Dämme', () => {
     const world = World.generate(32, 32, 1);
+    world.freeBuild = true;
     const i = 10 * 32 + 10;
     const g = world.ground[i];
     world.apply('anheben', i);
