@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { BuildingId } from '../data/buildings';
 import { DAY } from './seasons';
+import { restoreWorld, serializeWorld } from './save';
 import { START_OTTERS, START_WOOD, World } from './world';
 
 function placeNear(world: World, id: BuildingId, cx: number, cy: number, radius = 16): boolean {
@@ -52,6 +53,16 @@ function placeBuilt(world: World, id: BuildingId, cx: number, cy: number, radius
 
 function lagerOf(world: World) {
   return [...world.buildings.alive()].find((b) => b.def === 'lager')!;
+}
+
+/** Tiefste Flusszelle in einer Zeile */
+function riverAt(world: World, y: number): number {
+  let best = -1;
+  for (let x = 0; x < world.w; x++) {
+    const i = y * world.w + x;
+    if (best < 0 || world.water.depth[i] > world.water.depth[best]) best = i;
+  }
+  return best;
 }
 
 describe('Siedlung', { timeout: 30000 }, () => {
@@ -372,6 +383,82 @@ describe('Siedlung', { timeout: 30000 }, () => {
     runDays(world, 0.1);
     expect(world.outcome).toBe('lost');
     expect(world.messages.join(' ')).toContain('ausgelöscht');
+  });
+
+  it('Holzsteg steht im Wasser und ist begehbar', () => {
+    const { world, lx, ly } = setup();
+    world.forceWeather('normal');
+    expect(world.placementError('steg', lx - 1, ly)).toContain('muss im Wasser stehen');
+    // eine Flusszelle in der Nähe des Lagers mit Ufer daneben
+    let cell = -1;
+    let bank = -1;
+    for (let y = ly - 6; y <= ly + 6 && cell < 0; y++) {
+      const i = riverAt(world, y);
+      if (world.water.depth[i] < 0.2) continue;
+      for (const n of [i - 1, i + 1]) {
+        if (world.water.depth[n] <= 0.05 && world.walkable(n)) {
+          cell = i;
+          bank = n;
+        }
+      }
+    }
+    expect(cell).toBeGreaterThan(0);
+    expect(world.placementError('steg', cell % world.w, (cell / world.w) | 0)).toBeNull();
+    expect(world.place('steg', cell % world.w, (cell / world.w) | 0, true)).not.toBeNull();
+    expect(world.isJetty(cell)).toBe(true);
+    expect(world.walkable(cell)).toBe(true);
+    expect(world.canStep(bank, cell)).toBe(true);
+    // der Weg vom Ufer auf den Steg ist frei
+    expect(world.path.find(bank, [cell])).toEqual([cell]);
+  });
+
+  it('das Lagerhaus fasst hundert je Ware', () => {
+    const { world, lx, ly } = setup();
+    expect(placeBuilt(world, 'lagerhaus', lx, ly)).toBe(true);
+    expect(world.buildings.storageCapacity()).toBe(40 + 100);
+    expect(world.buildings.putGood('holz', 100, lx, ly)).toBe(0);
+    expect(world.buildings.total('holz')).toBe(START_WOOD + 100);
+    const big = [...world.buildings.alive()].find((b) => b.def === 'lagerhaus')!;
+    expect(big.stock.holz).toBeGreaterThanOrEqual(90);
+  });
+
+  it('Flöße bringen Waren in den zweiten Bezirk, in der Dürre nicht', () => {
+    const { world, lx, ly } = setup();
+    world.forceWeather('normal');
+    expect(placeBuilt(world, 'flossanleger', lx, ly, 24)).toBe(true);
+    // zweiter Bezirk 30 Zeilen flussabwärts mit eigenem Lager und Anleger
+    const river = riverAt(world, ly + 30);
+    const rx = river % world.w;
+    const ry = (river / world.w) | 0;
+    expect(placeBuilt(world, 'lager', rx + 7, ry, 8)).toBe(true);
+    const lagerB = [...world.buildings.alive()].filter((b) => b.def === 'lager').at(-1)!;
+    expect(placeBuilt(world, 'flossanleger', lagerB.x, lagerB.y, 14)).toBe(true);
+    const docks = [...world.buildings.alive()].filter((b) => b.def === 'flossanleger');
+    expect(docks.length).toBe(2);
+    world.rafts.sync();
+    expect(world.rafts.list.length).toBe(2);
+    expect(world.rafts.store(docks[0])!.id).toBe(lagerOf(world).id);
+    expect(world.rafts.store(docks[1])!.id).toBe(lagerB.id);
+    const lagerA = lagerOf(world);
+    lagerA.stock.fisch = 30;
+    runDays(world, 3);
+    expect(world.rafts.trips).toBeGreaterThanOrEqual(1);
+    expect(lagerB.stock.fisch).toBeGreaterThan(0);
+    expect(lagerA.stock.fisch).toBeLessThan(30);
+    // Spielstand mit Flößen
+    const { data } = serializeWorld(world);
+    const back = restoreWorld(JSON.parse(JSON.stringify(data)));
+    expect(back.rafts.list.length).toBe(2);
+    expect(back.rafts.trips).toBe(world.rafts.trips);
+    // in der Dürre liegt der Fluss trocken, nichts fährt mehr
+    world.forceWeather('duerre');
+    runDays(world, 6);
+    const trips = world.rafts.trips;
+    lagerA.stock.fisch = 30;
+    lagerB.stock.fisch = 0;
+    runDays(world, 3);
+    expect(world.rafts.trips).toBe(trips);
+    expect(lagerB.stock.fisch).toBe(0);
   });
 
   it('Bibliothek sammelt Wissen, Forschung schaltet Gebäude frei', () => {

@@ -5,6 +5,7 @@ import { TECH_FOR, TECH_ORDER, TECHS, type TechId } from '../data/tech';
 import { Buildings, type Building } from './buildings';
 import { Citizens, type Env } from './citizens';
 import { Pathfinder } from './pathfinding';
+import { RAFT_DEPTH, Rafts } from './rafts';
 import { mulberry32, type Rng } from './rng';
 import { DAY, Seasons, type SeasonInfo } from './seasons';
 import { generateValley, MAX_HEIGHT, type MapData } from './terrain';
@@ -69,6 +70,11 @@ export interface WorldStats {
   hasKnowledge: boolean;
   /** Werkzeug für alle Arbeiter da: alle arbeiten schneller */
   toolBonus: boolean;
+  /** fertige Lager und Lagerhäuser (Bezirke) */
+  districts: number;
+  rafts: number;
+  /** abgeschlossene Floßlieferungen */
+  raftTrips: number;
   water: number;
   waterCap: number;
   /** Verschmutzung des gespeicherten Wassers 0..1 */
@@ -108,6 +114,9 @@ export class World implements Env {
   readonly buildings: Buildings;
   readonly veg: Vegetation;
   readonly citizens: Citizens;
+  readonly rafts: Rafts;
+  /** Wegsuche für Flöße auf dem Wasser */
+  readonly waterPath: Pathfinder;
   readonly path: Pathfinder;
   readonly seasons: Seasons;
   readonly reserved = new Set<number>();
@@ -173,7 +182,14 @@ export class World implements Env {
       (i) => this.cost(i),
       (a, b) => this.canStep(a, b),
     );
+    this.waterPath = new Pathfinder(
+      map.w,
+      map.h,
+      (i) => this.waterCost(i),
+      () => true,
+    );
     this.citizens = new Citizens(this);
+    this.rafts = new Rafts(this);
   }
 
   static generate(w: number, h: number, seed: number, scenario?: Scenario): World {
@@ -351,7 +367,15 @@ export class World implements Env {
   }
 
   walkable(i: number): boolean {
-    return this.buildings.occ[i] < 0;
+    return this.buildings.occ[i] < 0 || this.isJetty(i);
+  }
+
+  /** Steht hier ein Steg, über den man gehen kann? */
+  isJetty(i: number): boolean {
+    const id = this.buildings.occ[i];
+    if (id < 0) return false;
+    const b = this.buildings.get(id);
+    return !!b && b.def === 'steg' && b.built;
   }
 
   /** Wie viele verschiedene Freude-Gebäude diesen Punkt erreichen; die Schenke zählt nur mit Wirt */
@@ -370,7 +394,7 @@ export class World implements Env {
   }
 
   private cost(i: number): number {
-    if (this.buildings.occ[i] >= 0) return 0;
+    if (this.buildings.occ[i] >= 0) return this.isJetty(i) ? 1 : 0;
     const d = this.water.depth[i];
     if (d > 0.25) return 2.5;
     if (this.veg.trees[i] > 0) return 1.5;
@@ -380,7 +404,16 @@ export class World implements Env {
   canStep(a: number, b: number): boolean {
     const d = this.water.depth;
     if (d[a] > 0.25 && d[b] > 0.25) return true;
+    if (this.isJetty(a) || this.isJetty(b)) return true;
     return Math.abs(this.height(a) - this.height(b)) <= 1;
+  }
+
+  /** Kosten für Flöße: nur Wasser, tiefes lieber als flaches, nichts durch Gebäude */
+  private waterCost(i: number): number {
+    if (this.buildings.occ[i] >= 0) return 0;
+    const d = this.water.depth[i];
+    if (d < RAFT_DEPTH) return 0;
+    return d >= 0.3 ? 1 : 1.6;
   }
 
   log(msg: string): void {
@@ -460,6 +493,7 @@ export class World implements Env {
       this.staffWarning();
     }
     this.citizens.step(dt);
+    this.rafts.step(dt);
   }
 
   /** Stromhaushalt: Wasserräder nach Strömung, Laufräder mit Läufer, Bedarf der Verbraucher */
@@ -658,6 +692,9 @@ export class World implements Env {
       techs: TECH_ORDER.filter((t) => this.techs.has(t)),
       hasKnowledge: this.knowledge > 0 || this.techs.size > 0 || [...this.buildings.alive()].some((b) => BUILDINGS[b.def].knowledge > 0),
       toolBonus: this.citizens.toolBonus,
+      districts: this.buildings.stores().length,
+      rafts: this.rafts.list.length,
+      raftTrips: this.rafts.trips,
       water: this.store.stored,
       waterCap: this.buildings.waterCapacity(),
       waterPollution: this.store.pollution,
@@ -815,6 +852,7 @@ export class World implements Env {
     const b = this.buildings.remove(id);
     if (!b) return false;
     this.citizens.detachBuilding(id);
+    this.rafts.sync();
     const def = BUILDINGS[b.def];
     for (const g of GOODS) {
       const refund = Math.floor(b.delivered[g] / 2) + b.stock[g];

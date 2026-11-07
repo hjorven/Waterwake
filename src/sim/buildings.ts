@@ -61,7 +61,9 @@ export function canPlaceAt(id: BuildingId, x: number, y: number, w: number, h: n
       if (occ[i] >= 0) return 'hier steht schon etwas';
       if (ctx.struct[i] > 0) return 'auf Dämmen kann man nicht bauen';
       if (ctx.sink[i]) return 'zu nah am Kartenrand';
-      if (ctx.depth[i] > 0.15) return 'das Land ist überflutet';
+      if (def.onWater) {
+        if (ctx.depth[i] < 0.15) return `${def.name} muss im Wasser stehen`;
+      } else if (ctx.depth[i] > 0.05) return 'das Land ist überflutet';
       if (height < 0) height = ctx.ground[i];
       else if (ctx.ground[i] !== height) return 'der Boden muss eben sein';
     }
@@ -309,11 +311,21 @@ export class Buildings {
     return null;
   }
 
+  /** Fertiges Lager oder Lagerhaus */
+  isStore(b: Building): boolean {
+    return b.built && BUILDINGS[b.def].storage > 0;
+  }
+
+  /** Alle fertigen Lager und Lagerhäuser */
+  stores(): Building[] {
+    return [...this.alive()].filter((b) => this.isStore(b));
+  }
+
   private storageWhere(ok: (b: Building) => boolean, x: number, y: number): Building | null {
     let best: Building | null = null;
     let bestD = Infinity;
     for (const b of this.alive()) {
-      if (b.def !== 'lager' || !b.built || !ok(b)) continue;
+      if (!this.isStore(b) || !ok(b)) continue;
       const c = this.center(b);
       const d = Math.abs(c.x - x) + Math.abs(c.y - y);
       if (d < bestD) {
@@ -329,7 +341,7 @@ export class Buildings {
     let best: Building | null = null;
     let bestD = Infinity;
     for (const b of this.alive()) {
-      if (b.def !== 'lager' || !b.built) continue;
+      if (!this.isStore(b)) continue;
       if (b.stock[good] + amount > this.def(b).storage) continue;
       const c = this.center(b);
       const d = Math.abs(c.x - x) + Math.abs(c.y - y);
@@ -386,7 +398,7 @@ export class Buildings {
 
   storageCapacity(): number {
     let s = 0;
-    for (const b of this.alive()) if (b.def === 'lager' && b.built) s += this.def(b).storage;
+    for (const b of this.alive()) if (this.isStore(b)) s += this.def(b).storage;
     return s;
   }
 

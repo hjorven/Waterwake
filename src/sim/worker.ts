@@ -2,7 +2,7 @@
 import { BUILDINGS } from '../data/buildings';
 import { freeScenario, scenarioById } from '../data/maps';
 import { GOOD_CODE, STATE_CODE } from './citizens';
-import { CITIZEN_STRIDE, type BuildingSnap, type FromWorker, type ToWorker } from './protocol';
+import { CITIZEN_STRIDE, RAFT_STRIDE, type BuildingSnap, type FromWorker, type ToWorker } from './protocol';
 import { restoreWorld, serializeWorld } from './save';
 import { SIM_DT, World } from './world';
 
@@ -56,6 +56,18 @@ function sendBuildings(): void {
   buildingsSentAt = performance.now();
   const list: BuildingSnap[] = [];
   for (const b of world.buildings.alive()) {
+    let raftText: string | undefined;
+    let district: string | undefined;
+    if (b.def === 'flossanleger' && b.built) {
+      const raft = world.rafts.raftOf(b.id);
+      raftText = raft ? world.rafts.describe(raft) : 'kein Wasser am Anleger';
+      const store = world.rafts.store(b);
+      if (store) {
+        const a = world.buildings.center(b);
+        const c = world.buildings.center(store);
+        district = `${BUILDINGS[store.def].name} (${Math.round(Math.hypot(a.x - c.x, a.y - c.y))} Felder)`;
+      } else district = '';
+    }
     list.push({
       id: b.id,
       def: b.def,
@@ -73,6 +85,8 @@ function sendBuildings(): void {
       flooded: b.flooded,
       damage: b.damage,
       power: b.def === 'wasserrad' ? world.wheelPower(b) : b.def === 'laufrad' ? (world.citizens.workingAt(b.id, 'tread') ? BUILDINGS.laufrad.powerGen : 0) : world.power.ratio,
+      raftText,
+      district,
     });
   }
   post({ type: 'buildings', list, version: world.buildings.version });
@@ -157,7 +171,8 @@ function tick(): void {
   for (const c of citizens.alive()) {
     const cell = citizens.cell(c);
     const d = depth[cell];
-    const z = world.height(cell) + (d > 0.25 ? d * 0.6 : d);
+    // auf dem Floß und auf dem Steg stehen Otter über dem Wasser
+    const z = c.state === 'ride' ? world.height(cell) + d + 0.12 : world.isJetty(cell) ? world.height(cell) + 0.62 : world.height(cell) + (d > 0.25 ? d * 0.6 : d);
     cz[k++] = c.id;
     cz[k++] = c.x;
     cz[k++] = c.y;
@@ -167,6 +182,20 @@ function tick(): void {
     cz[k++] = c.carry ? GOOD_CODE[c.carry] : 0;
     cz[k++] = c.child ? 0.6 : 1;
     cz[k++] = c.sick ? 1 : 0;
+  }
+
+  const rafts = world.rafts.list;
+  const rz = new Float32Array(rafts.length * RAFT_STRIDE);
+  let q = 0;
+  for (const r of rafts) {
+    const cell = world.rafts.cell(r);
+    rz[q++] = r.id;
+    rz[q++] = r.x;
+    rz[q++] = r.y;
+    rz[q++] = world.height(cell) + depth[cell];
+    rz[q++] = r.heading;
+    rz[q++] = r.good ? GOOD_CODE[r.good] : 0;
+    rz[q++] = r.amount;
   }
 
   const messages = world.messages.splice(0, world.messages.length);
@@ -179,6 +208,8 @@ function tick(): void {
       pollution,
       citizens: cz,
       citizenCount: count,
+      rafts: rz,
+      raftCount: rafts.length,
       stats: {
         time: world.time,
         weather: world.weather,
@@ -192,7 +223,7 @@ function tick(): void {
       },
       messages,
     },
-    pollution ? [depth.buffer, v.buffer, cz.buffer, pollution.buffer] : [depth.buffer, v.buffer, cz.buffer],
+    pollution ? [depth.buffer, v.buffer, cz.buffer, rz.buffer, pollution.buffer] : [depth.buffer, v.buffer, cz.buffer, rz.buffer],
   );
 
   // Einmal am Tag automatisch speichern

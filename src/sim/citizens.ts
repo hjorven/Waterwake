@@ -2,13 +2,14 @@ import { BUILDINGS, DRINK_SPOTS, type BuildingId } from '../data/buildings';
 import { type Good } from '../data/goods';
 import type { Building, Buildings } from './buildings';
 import type { Pathfinder } from './pathfinding';
+import type { Rafts } from './rafts';
 import { DAY } from './seasons';
 import { TREE_GROWN, type Vegetation } from './vegetation';
 
 export { GOOD_CODE } from '../data/goods';
 
-export type CitizenState = 'idle' | 'walk' | 'work' | 'drink' | 'eat';
-export const STATE_CODE: Record<CitizenState, number> = { idle: 0, walk: 1, work: 2, drink: 3, eat: 4 };
+export type CitizenState = 'idle' | 'walk' | 'work' | 'drink' | 'eat' | 'ride';
+export const STATE_CODE: Record<CitizenState, number> = { idle: 0, walk: 1, work: 2, drink: 3, eat: 4, ride: 5 };
 
 type TaskKind =
   | 'pump'
@@ -27,6 +28,8 @@ type TaskKind =
   | 'study'
   | 'craft'
   | 'fish'
+  /** mit dem Floß fahren (Flößer) */
+  | 'ferry'
   | 'tend'
   | 'harvest'
   | 'deliver';
@@ -119,6 +122,7 @@ export interface Env {
   buildings: Buildings;
   veg: Vegetation;
   path: Pathfinder;
+  rafts: Rafts;
   walkable(i: number): boolean;
   /** darf man von Zelle a nach b treten (Höhenunterschied) */
   canStep(a: number, b: number): boolean;
@@ -369,6 +373,9 @@ export class Citizens {
         case 'eat':
           this.doWork(c, dt);
           break;
+        case 'ride':
+          this.ride(c);
+          break;
       }
     }
   }
@@ -506,7 +513,7 @@ export class Citizens {
     const env = this.env;
     const inside = new Set(cells);
     for (const c of this.list) {
-      if (!c.alive || !inside.has(this.cell(c)) || this.canLeave(this.cell(c))) continue;
+      if (!c.alive || c.state === 'ride' || !inside.has(this.cell(c)) || this.canLeave(this.cell(c))) continue;
       const spot = this.freeCellNear(cells);
       if (spot < 0) continue;
       this.fail(c);
@@ -735,6 +742,14 @@ export class Citizens {
           return true;
         }
         return this.startTask(c, task('chop', wp.id, { target: t }), [t]);
+      }
+      case 'flossanleger': {
+        const raft = env.rafts.raftOf(wp.id);
+        if (!raft || !env.rafts.hasJob(raft)) {
+          c.cooldown = 5;
+          return true;
+        }
+        return this.startTask(c, task('ferry', wp.id), b.ring(wp).filter((i) => env.walkable(i)));
       }
       case 'fischer': {
         if (this.goToShore(c, task('fish', wp.id), ctr, def.range, (i) => env.depth[i] >= FISH_DEPTH && env.pollution[i] < 0.3 && env.buildings.occ[i] < 0 && env.struct[i] === 0, true)) return true;
@@ -1040,6 +1055,29 @@ export class Citizens {
     }
   }
 
+  /** Der Flößer fährt auf dem Floß mit, bis es wieder am Heimatanleger liegt */
+  private ride(c: Citizen): void {
+    const env = this.env;
+    const t = c.task;
+    const raft = t ? env.rafts.raftOf(t.building) : null;
+    if (raft && raft.crew === c.id) {
+      c.x = raft.x;
+      c.y = raft.y;
+      c.heading = raft.heading;
+      return;
+    }
+    // Fahrt zu Ende: an Land gehen; Floß weg oder festgefahren: ins Wasser
+    const dock = t ? env.buildings.get(t.building) : null;
+    if (raft && raft.state === 'wartet' && dock) {
+      const spot = this.freeCellNear(env.buildings.cells(dock));
+      if (spot >= 0) {
+        c.x = (spot % env.w) + 0.5;
+        c.y = Math.floor(spot / env.w) + 0.5;
+      }
+    }
+    this.finish(c, 1);
+  }
+
   private arrive(c: Citizen): void {
     const t = c.task;
     if (!t) {
@@ -1108,6 +1146,17 @@ export class Citizens {
         c.state = 'work';
         t.timer = FISH_TIME;
         break;
+      case 'ferry': {
+        const raft = this.env.rafts.raftOf(t.building);
+        if (!raft || !this.env.rafts.board(raft, c.id)) {
+          this.fail(c);
+          return;
+        }
+        c.state = 'ride';
+        c.x = raft.x;
+        c.y = raft.y;
+        break;
+      }
       case 'tend':
         c.state = 'work';
         t.timer = POND_TIME;
@@ -1417,7 +1466,7 @@ export class Citizens {
     const l = b.get(lagerId);
     const def = l ? BUILDINGS[l.def] : null;
     let left = c.carryAmount;
-    if (l && def && l.def === 'lager' && l.built) {
+    if (l && def && b.isStore(l)) {
       const space = def.storage - l.stock[c.carry];
       const put = Math.min(space, left);
       l.stock[c.carry] += put;

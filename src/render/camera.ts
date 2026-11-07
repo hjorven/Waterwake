@@ -1,5 +1,10 @@
 import * as THREE from 'three';
 
+/** Mindestabstand der Kamera zum Gelände */
+const CLEARANCE = 2.5;
+/** Anteile der Strecke Kamera-Ziel, an denen das Gelände geprüft wird */
+const CLEARANCE_SAMPLES = [0, 0.1, 0.2, 0.3];
+
 /**
  * Orbit-Kamera für Maus und Touch:
  * - Linke Maustaste auf Gelände: Werkzeug (wird von außen behandelt)
@@ -25,6 +30,8 @@ export class CameraRig {
   private lastMid = { x: 0, y: 0 };
   private lastAngle = 0;
   private bounds = { w: 96, h: 96 };
+  /** Geländehöhe unter einem Punkt, damit die Kamera nicht in Berge taucht */
+  heightAt: (x: number, z: number) => number = () => 0;
 
   constructor(el: HTMLElement, aspect: number) {
     this.el = el;
@@ -159,11 +166,22 @@ export class CameraRig {
     this.target.z = Math.max(-5, Math.min(this.bounds.h + 5, this.target.z));
     const cp = Math.cos(this.pitch);
     const sp = Math.sin(this.pitch);
-    this.camera.position.set(
+    const pos = this.camera.position;
+    pos.set(
       this.target.x + Math.sin(this.yaw) * cp * this.distance,
       this.target.y + sp * this.distance,
       this.target.z + Math.cos(this.yaw) * cp * this.distance,
     );
+    // Kamera über dem Gelände halten: Punkte auf der Sichtlinie nahe der Kamera prüfen
+    let lift = 0;
+    for (const f of CLEARANCE_SAMPLES) {
+      const x = pos.x + (this.target.x - pos.x) * f;
+      const y = pos.y + (this.target.y - pos.y) * f;
+      const z = pos.z + (this.target.z - pos.z) * f;
+      const need = this.heightAt(x, z) + CLEARANCE - y;
+      if (need > 0) lift = Math.max(lift, need / (1 - f));
+    }
+    pos.y += lift;
     this.camera.lookAt(this.target);
   }
 

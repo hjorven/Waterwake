@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { BuildingId } from '../data/buildings';
-import { CITIZEN_STRIDE, type BuildingSnap } from '../sim/protocol';
+import { CITIZEN_STRIDE, RAFT_STRIDE, type BuildingSnap } from '../sim/protocol';
 import {
   BUILDING_IDS,
   berriesGeometry,
@@ -9,6 +9,8 @@ import {
   CARRY_CODES,
   carryGeometry,
   otterGeometry,
+  raftCargoGeometry,
+  raftGeometry,
   siteGeometry,
   treeGeometry,
 } from './models';
@@ -57,6 +59,10 @@ const scl = new THREE.Vector3();
 const yAxis = new THREE.Vector3(0, 1, 0);
 const color = new THREE.Color();
 
+/** Abstand des Flößers hinter der Floßmitte und der Ladung davor */
+const RIDE_BACK = 0.26;
+const CARGO_FRONT = 0.2;
+
 function setInstance(mesh: THREE.InstancedMesh, i: number, x: number, y: number, z: number, ry: number, s: number, sy = s): void {
   pos.set(x, y, z);
   quat.setFromAxisAngle(yAxis, ry);
@@ -88,6 +94,19 @@ interface CitizenTrack {
   sick: boolean;
 }
 
+interface RaftTrack {
+  id: number;
+  px: number;
+  py: number;
+  pz: number;
+  x: number;
+  y: number;
+  z: number;
+  heading: number;
+  cargo: number;
+  amount: number;
+}
+
 /**
  * Alle Bäume, Sträucher, Gebäude und Bewohner als InstancedMesh.
  * Höhen kommen vom Gelände (Boden plus Bauwerk).
@@ -103,8 +122,12 @@ export class InstanceRenderer {
   private readonly otters: Pool;
   /** getragene Waren je Kennziffer */
   private readonly carried = new Map<number, Pool>();
+  private readonly rafts: Pool;
+  /** Ladung auf Flößen je Kennziffer */
+  private readonly raftCargo = new Map<number, Pool>();
   private height = new Float32Array(0);
   private tracks = new Map<number, CitizenTrack>();
+  private raftTracks = new Map<number, RaftTrack>();
   private snapTime = 0;
   private snapInterval = 0.05;
   private buildingList: BuildingSnap[] = [];
@@ -119,6 +142,8 @@ export class InstanceRenderer {
     for (const size of [1, 2]) this.sites.set(size, new Pool(this.group, siteGeometry(size), 16));
     this.otters = new Pool(this.group, otterGeometry(), 64, true);
     for (const code of CARRY_CODES) this.carried.set(code, new Pool(this.group, carryGeometry(code), 16));
+    this.rafts = new Pool(this.group, raftGeometry(), 8);
+    for (const code of CARRY_CODES) this.raftCargo.set(code, new Pool(this.group, raftCargoGeometry(code), 8));
   }
 
   setTerrain(ground: Uint8Array<ArrayBufferLike>, struct: Uint8Array<ArrayBufferLike>): void {
@@ -240,6 +265,31 @@ export class InstanceRenderer {
     this.snapTime = now;
   }
 
+  setRafts(data: Float32Array<ArrayBufferLike>, count: number): void {
+    const seen = new Set<number>();
+    for (let k = 0; k < count; k++) {
+      const o = k * RAFT_STRIDE;
+      const id = data[o];
+      seen.add(id);
+      let t = this.raftTracks.get(id);
+      if (!t) {
+        t = { id, px: data[o + 1], py: data[o + 2], pz: data[o + 3], x: 0, y: 0, z: 0, heading: 0, cargo: 0, amount: 0 };
+        this.raftTracks.set(id, t);
+      } else {
+        t.px = t.x;
+        t.py = t.y;
+        t.pz = t.z;
+      }
+      t.x = data[o + 1];
+      t.y = data[o + 2];
+      t.z = data[o + 3];
+      t.heading = data[o + 4];
+      t.cargo = data[o + 5];
+      t.amount = data[o + 6];
+    }
+    for (const id of [...this.raftTracks.keys()]) if (!seen.has(id)) this.raftTracks.delete(id);
+  }
+
   /** Jeden Frame: Bewohner zwischen den Simulationsständen interpolieren */
   update(now: number): void {
     const n = this.tracks.size;
@@ -251,8 +301,10 @@ export class InstanceRenderer {
     const a = Math.min(1, (now - this.snapTime) / this.snapInterval);
     let i = 0;
     for (const t of this.tracks.values()) {
-      const x = t.px + (t.x - t.px) * a;
-      const y = t.py + (t.y - t.py) * a;
+      // auf dem Floß steht der Otter hinten, die Ladung liegt vorn
+      const riding = t.state === 5;
+      const x = t.px + (t.x - t.px) * a - (riding ? Math.sin(t.heading) * RIDE_BACK : 0);
+      const y = t.py + (t.y - t.py) * a - (riding ? Math.cos(t.heading) * RIDE_BACK : 0);
       const z = t.pz + (t.z - t.pz) * a;
       const walking = t.state === 1;
       const bob = walking ? Math.abs(Math.sin(now * 12 + t.id)) * 0.06 : 0;
@@ -270,5 +322,27 @@ export class InstanceRenderer {
     this.otters.mesh.instanceMatrix.needsUpdate = true;
     if (this.otters.mesh.instanceColor) this.otters.mesh.instanceColor.needsUpdate = true;
     for (const pool of this.carried.values()) pool.mesh.instanceMatrix.needsUpdate = true;
+
+    // Flöße schaukeln leicht auf dem Wasser
+    const nr = this.raftTracks.size;
+    this.rafts.ensure(nr);
+    for (const pool of this.raftCargo.values()) {
+      pool.ensure(nr);
+      pool.mesh.count = 0;
+    }
+    let r = 0;
+    for (const t of this.raftTracks.values()) {
+      const x = t.px + (t.x - t.px) * a;
+      const y = t.py + (t.y - t.py) * a;
+      const z = t.pz + (t.z - t.pz) * a + Math.sin(now * 2 + t.id) * 0.02;
+      setInstance(this.rafts.mesh, r++, x, z, y, t.heading, 1);
+      const cargo = this.raftCargo.get(t.cargo);
+      if (cargo && t.amount > 0) {
+        setInstance(cargo.mesh, cargo.mesh.count++, x + Math.sin(t.heading) * CARGO_FRONT, z + 0.12, y + Math.cos(t.heading) * CARGO_FRONT, t.heading, 1);
+      }
+    }
+    this.rafts.mesh.count = r;
+    this.rafts.mesh.instanceMatrix.needsUpdate = true;
+    for (const pool of this.raftCargo.values()) pool.mesh.instanceMatrix.needsUpdate = true;
   }
 }

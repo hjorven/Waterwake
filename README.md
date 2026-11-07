@@ -36,6 +36,11 @@ Spielen: https://hjorven.github.io/Waterwake/
   Werkstatt. Abwechslung beim Essen und Freude-Gebäude (Lagerfeuer, Statue,
   Spielplatz, Beerenschenke, Aussichtsturm) machen den Clan zufriedener, der
   Beerengärtner pflanzt Sträucher, die Sternwarte sagt Jahreszeiten genau voraus.
+- **M4, Teil 3: Bezirke und Flöße**: Ein zweites Lager oder das Lagerhaus
+  (hundert Stück je Ware) bildet einen eigenen Bezirk. Floßanleger am Fluss
+  bekommen ein Floß, der Flößer fährt mit und bringt Waren dorthin, wo sie
+  knapp sind, solange der Fluss durchgehend Wasser führt (in der Dürre nicht).
+  Der Holzsteg macht eine Wasserzelle begehbar. Technik Flößerei.
 
 ## Steuerung
 

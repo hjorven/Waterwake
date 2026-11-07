@@ -664,7 +664,80 @@ export function buildingGeometry(id: BuildingId): THREE.BufferGeometry {
         box(0.04, 0.4, 0.04, C.holzDunkel, 0, 2.2, 0),
         box(0.22, 0.12, 0.02, C.beere, 0.12, 2.46, 0),
       ]);
+    case 'lagerhaus': {
+      const parts: THREE.BufferGeometry[] = [
+        box(1.8, 0.1, 1.8, C.holzDunkel, 0, 0, 0),
+        box(1.7, 0.85, 1.4, C.holz, 0, 0.1, 0),
+        gable(1.6, 0.55, 1.86, C.stroh, 0, 0.95, 0, Math.PI / 2),
+        box(1.76, 0.06, 0.06, C.holzDunkel, 0, 0.92, 0.72),
+        box(1.76, 0.06, 0.06, C.holzDunkel, 0, 0.92, -0.72),
+        // großes Tor und ein Schild
+        box(0.6, 0.6, 0.04, C.holzDunkel, 0, 0.1, 0.71),
+        box(0.03, 0.6, 0.05, C.holzHell, 0, 0.1, 0.72),
+        box(0.36, 0.16, 0.03, C.holzHell, 0, 0.74, 0.72),
+      ];
+      // Fässer und Kisten vor der Tür
+      parts.push(cylinder(0.14, 0.26, C.holzHell, -0.7, 0.1, 0.78, 7, 0.16));
+      parts.push(cylinder(0.14, 0.26, C.holzHell, 0.72, 0.1, 0.8, 7, 0.16));
+      parts.push(box(0.26, 0.26, 0.26, C.holzHell, 0.72, 0.36, 0.8));
+      parts.push(cylinder(0.1, 0.06, C.beere, -0.7, 0.36, 0.78, 7));
+      return merge(parts);
+    }
+    case 'flossanleger': {
+      const parts: THREE.BufferGeometry[] = [box(0.92, 0.06, 0.92, C.holzHell, 0, 0.3, 0)];
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) parts.push(cylinder(0.05, 0.32, C.holzDunkel, sx * 0.38, 0, sz * 0.38, 6));
+      // Ladekran: zwei schräge Stämme, Querbalken, Seil mit Kiste
+      const l1 = box(0.06, 1.0, 0.06, C.holzDunkel, 0, 0, 0);
+      l1.rotateZ(0.35);
+      l1.translate(-0.28, 0.36, -0.25);
+      const l2 = box(0.06, 1.0, 0.06, C.holzDunkel, 0, 0, 0);
+      l2.rotateZ(-0.35);
+      l2.translate(0.28, 0.36, -0.25);
+      parts.push(l1, l2);
+      parts.push(box(0.1, 0.06, 0.7, C.holzDunkel, 0, 1.28, 0));
+      parts.push(cylinder(0.012, 0.5, C.stroh, 0, 0.8, 0.22, 4));
+      parts.push(box(0.22, 0.2, 0.22, C.holzHell, 0, 0.6, 0.22));
+      // Poller und ein Seilring
+      parts.push(cylinder(0.05, 0.22, C.holzDunkel, 0.36, 0.36, 0.36, 6));
+      parts.push(cylinder(0.09, 0.04, C.stroh, -0.3, 0.36, 0.3, 8));
+      return merge(parts);
+    }
+    case 'steg': {
+      // steht auf dem Flussgrund, das Deck liegt über dem Wasser
+      const parts: THREE.BufferGeometry[] = [box(0.96, 0.06, 0.96, C.holzHell, 0, 0.6, 0)];
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) parts.push(cylinder(0.05, 0.62, C.holzDunkel, sx * 0.4, 0, sz * 0.4, 6));
+      for (const z of [-0.3, 0, 0.3]) parts.push(box(0.96, 0.02, 0.03, C.holz, 0, 0.66, z));
+      parts.push(cylinder(0.04, 0.22, C.holzDunkel, 0.42, 0.66, -0.42, 6));
+      return merge(parts);
+    }
   }
+}
+
+/** Floß aus Stämmen mit Querbalken und Staken */
+export function raftGeometry(): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  for (let k = 0; k < 6; k++) {
+    const g = colored(new THREE.CylinderGeometry(0.08, 0.08, 0.9, 6), k % 2 ? C.holz : C.holzHell);
+    g.rotateX(Math.PI / 2);
+    g.translate(-0.4 + k * 0.16, 0.08, 0);
+    parts.push(g);
+  }
+  parts.push(box(0.95, 0.05, 0.08, C.holzDunkel, 0, 0.16, 0.3));
+  parts.push(box(0.95, 0.05, 0.08, C.holzDunkel, 0, 0.16, -0.3));
+  const pole = colored(new THREE.CylinderGeometry(0.02, 0.02, 1.1, 5), C.holzDunkel);
+  pole.rotateZ(0.3);
+  pole.translate(0.38, 0.55, -0.32);
+  parts.push(pole);
+  return merge(parts);
+}
+
+/** Ladung auf dem Floß, größer als auf dem Rücken eines Otters */
+export function raftCargoGeometry(code: number): THREE.BufferGeometry {
+  const g = carryGeometry(code);
+  g.translate(0, -0.12, 0);
+  g.scale(1.5, 1.5, 1.5);
+  g.computeBoundingSphere();
+  return g;
 }
 
 export const BUILDING_IDS: BuildingId[] = Object.keys(BUILDINGS) as BuildingId[];
