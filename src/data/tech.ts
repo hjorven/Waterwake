@@ -14,7 +14,8 @@ export type TechId =
   | 'schnitzkunst'
   | 'geselligkeit'
   | 'muehlenbau'
-  | 'maschinen';
+  | 'maschinen'
+  | 'flosserei';
 
 export interface TechDef {
   id: TechId;
@@ -123,7 +124,7 @@ export const TECHS: Record<TechId, TechDef> = {
     desc: 'Mit Brettern entstehen das Langhaus für zehn Otter, das hochwassersichere Pfahlhaus und der Aussichtsturm.',
     cost: 18,
     requires: 'zimmerei',
-    unlocks: ['pfahlhaus', 'langhaus', 'aussichtsturm'],
+    unlocks: ['pfahlhaus', 'langhaus', 'aussichtsturm', 'steg'],
   },
   muehlenbau: {
     id: 'muehlenbau',
@@ -141,11 +142,19 @@ export const TECHS: Record<TechId, TechDef> = {
     requires: 'muehlenbau',
     unlocks: ['pumpwerk', 'sandfilter'],
   },
+  flosserei: {
+    id: 'flosserei',
+    name: 'Flößerei',
+    desc: 'Ein zweites Lager weit weg bildet einen eigenen Bezirk. Flößer bringen Waren auf dem Fluss von Anleger zu Anleger, das Lagerhaus fasst hundert Stück je Ware.',
+    cost: 18,
+    requires: 'pfahlbau',
+    unlocks: ['flossanleger', 'lagerhaus'],
+  },
 };
 
 export const TECH_ORDER: TechId[] = [
   'schrift', 'geselligkeit', 'heilkunde', 'fischfang', 'ackerbau', 'brunnenbau', 'zimmerei',
-  'sternkunde', 'teichwirtschaft', 'backkunst', 'schnitzkunst', 'pfahlbau', 'muehlenbau', 'maschinen',
+  'sternkunde', 'teichwirtschaft', 'backkunst', 'schnitzkunst', 'pfahlbau', 'flosserei', 'muehlenbau', 'maschinen',
 ];
 
 /** Technologie, die ein Gebäude freischaltet (fehlt bei Gebäuden, die von Anfang an gehen) */

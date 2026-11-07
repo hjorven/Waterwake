@@ -141,8 +141,17 @@ let struct: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
 let gate: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
 let sink: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
 let depth: Float32Array<ArrayBufferLike> = new Float32Array(0);
+let rafts: Float32Array<ArrayBufferLike> = new Float32Array(0);
+let raftCount = 0;
 let buildings: BuildingSnap[] = [];
 let occ = new Int16Array(0);
+rig.heightAt = (x, z) => {
+  const cx = Math.floor(x);
+  const cz = Math.floor(z);
+  if (cx < 0 || cz < 0 || cx >= MAP_W || cz >= MAP_H || ground.length !== MAP_W * MAP_H) return 0;
+  const i = cz * MAP_W + cx;
+  return ground[i] + struct[i];
+};
 let stats: SimStats | null = null;
 let running = false;
 let shownOutcome: Outcome = null;
@@ -163,6 +172,7 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
       stats = null;
       shownOutcome = null;
       instances.setCitizens(new Float32Array(0), 0, performance.now() / 1000);
+      instances.setRafts(new Float32Array(0), 0);
       hud.reset();
       hud.setVisible(true);
       running = true;
@@ -208,6 +218,9 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
       depth = msg.depth;
       water.setWater(msg.depth, msg.vel, msg.pollution);
       instances.setCitizens(msg.citizens, msg.citizenCount, performance.now() / 1000);
+      instances.setRafts(msg.rafts, msg.raftCount);
+      rafts = msg.rafts;
+      raftCount = msg.raftCount;
       stats = msg.stats;
       hud.setStats(stats);
       if (msg.messages.length) hud.pushMessages(msg.messages);
@@ -627,4 +640,5 @@ if (params.has('karte') || params.has('seed') || params.has('frei')) {
   mapH: () => MAP_H,
   ground: () => ground,
   depth: () => depth,
+  rafts: () => ({ data: rafts, count: raftCount }),
 };

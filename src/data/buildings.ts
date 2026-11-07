@@ -34,7 +34,10 @@ export type BuildingId =
   | 'beerenschenke'
   | 'statue'
   | 'spielplatz'
-  | 'aussichtsturm';
+  | 'aussichtsturm'
+  | 'lagerhaus'
+  | 'flossanleger'
+  | 'steg';
 
 /** Reiter im Baumenü */
 export type BuildingCategory = 'siedlung' | 'freude' | 'versorgung' | 'nahrung' | 'strom';
@@ -69,6 +72,8 @@ export interface BuildingDef {
   storage: number;
   /** muss mit einer Seite an Wasser stehen */
   needsWater: boolean;
+  /** steht auf einer Wasserzelle (Steg) */
+  onWater: boolean;
   /** Bauzeit in Sekunden Spielzeit */
   buildTime: number;
   /** macht Bewohner im Umkreis zufriedener */
@@ -101,6 +106,7 @@ function def(id: BuildingId, p: Partial_): BuildingDef {
     waterCap: 0,
     storage: 0,
     needsWater: false,
+    onWater: false,
     buildTime: 12,
     joy: false,
     floodDepth: 0.4,
@@ -124,6 +130,23 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     storage: 40,
     buildTime: 20,
     floodDepth: 0.9,
+  }),
+  lagerhaus: def('lagerhaus', {
+    name: 'Lagerhaus',
+    desc: 'Großes Lager für hundert Stück je Ware. Weit weg vom ersten Lager bildet es einen eigenen Bezirk, den Flöße beliefern.',
+    size: 2,
+    cost: { holz: 10, bretter: 10 },
+    storage: 100,
+    buildTime: 30,
+    floodDepth: 0.9,
+  }),
+  steg: def('steg', {
+    name: 'Holzsteg',
+    desc: 'Steg über eine Wasserzelle. Otter gehen darüber statt zu schwimmen und bleiben trocken, auch im Schlamm.',
+    cost: { holz: 2, bretter: 1 },
+    buildTime: 6,
+    floodDepth: 2.5,
+    onWater: true,
   }),
   huette: def('huette', {
     name: 'Wohnhütte',
@@ -287,6 +310,17 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     buildTime: 16,
     floodDepth: 0.9,
   }),
+  flossanleger: def('flossanleger', {
+    category: 'versorgung',
+    name: 'Floßanleger',
+    desc: 'Ein Flößer bringt Waren per Floß zu anderen Anlegern, wo sie knapp sind. Der Anleger versorgt das nächste Lager im Umkreis, der Fluss muss durchgehend Wasser führen.',
+    cost: { holz: 6, bretter: 4 },
+    workers: 1,
+    range: 18,
+    needsWater: true,
+    buildTime: 15,
+    floodDepth: 1.6,
+  }),
   holzfaeller: def('holzfaeller', {
     category: 'versorgung',
     name: 'Holzfäller',
@@ -434,9 +468,9 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
 };
 
 export const BUILDING_ORDER: BuildingId[] = [
-  'huette', 'pfahlhaus', 'langhaus', 'lager', 'heiler', 'bibliothek', 'schule', 'sternwarte',
+  'huette', 'pfahlhaus', 'langhaus', 'lager', 'lagerhaus', 'steg', 'heiler', 'bibliothek', 'schule', 'sternwarte',
   'badesteg', 'musikplatz', 'lagerfeuer', 'spielplatz', 'statue', 'beerenschenke', 'aussichtsturm',
-  'pumpe', 'tank', 'zisterne', 'brunnen', 'holzfaeller', 'foerster', 'saegewerk', 'werkstatt', 'kraeutergarten',
+  'pumpe', 'tank', 'zisterne', 'brunnen', 'flossanleger', 'holzfaeller', 'foerster', 'saegewerk', 'werkstatt', 'kraeutergarten',
   'sammler', 'beerengaertner', 'fischer', 'fischteich', 'feld', 'baeckerei',
   'wasserrad', 'laufrad', 'pumpwerk', 'sandfilter',
 ];

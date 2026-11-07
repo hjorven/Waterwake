@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BUILDINGS, type BuildingId } from '../data/buildings';
-import { buildingGeometry, CARRY_CODES, carryGeometry } from './models';
+import { buildingGeometry, CARRY_CODES, carryGeometry, raftCargoGeometry, raftGeometry } from './models';
 
 describe('Modelle', () => {
   it('jedes Gebäude und jede getragene Ware hat ein Modell', () => {
@@ -14,6 +14,12 @@ describe('Modelle', () => {
       const g = carryGeometry(code);
       expect(g.getAttribute('position').count).toBeGreaterThan(0);
       g.dispose();
+      const r = raftCargoGeometry(code);
+      expect(r.getAttribute('position').count).toBeGreaterThan(0);
+      r.dispose();
     }
+    const raft = raftGeometry();
+    expect(raft.getAttribute('position').count).toBeGreaterThan(0);
+    raft.dispose();
   });
 });

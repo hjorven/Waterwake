@@ -40,6 +40,10 @@ export interface BuildingSnap {
   damage: number;
   /** erzeugter Strom (Wasserrad, Laufrad) oder Anteil der Versorgung (Verbraucher) */
   power: number;
+  /** Floßanleger: was das Floß gerade tut */
+  raftText?: string;
+  /** Floßanleger: Lager des Bezirks, leer wenn keins im Umkreis steht */
+  district?: string;
 }
 
 export interface SimStats extends WorldStats {
@@ -61,6 +65,8 @@ export interface SimStats extends WorldStats {
 
 /** Werte je Bewohner im Float32Array: Id, x, y, z, Blickrichtung, Zustand, Ware, Größe, krank */
 export const CITIZEN_STRIDE = 9;
+/** Werte je Floß im Float32Array: Id, x, y, z, Blickrichtung, Ware, Menge */
+export const RAFT_STRIDE = 7;
 
 /** Nachrichten vom Worker an den Hauptthread */
 export type FromWorker =
@@ -84,6 +90,8 @@ export type FromWorker =
       pollution: Float32Array<ArrayBufferLike> | null;
       citizens: Float32Array<ArrayBufferLike>;
       citizenCount: number;
+      rafts: Float32Array<ArrayBufferLike>;
+      raftCount: number;
       stats: SimStats;
       messages: string[];
     }

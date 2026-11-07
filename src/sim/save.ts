@@ -2,11 +2,12 @@ import { freeScenario, scenarioById } from '../data/maps';
 import type { TechId } from '../data/tech';
 import type { SavedBuilding } from './buildings';
 import type { CitizensSave } from './citizens';
+import type { RaftsSave } from './rafts';
 import type { SeasonsSave } from './seasons';
 import type { Source } from './water';
 import { World, type Outcome, type Weather } from './world';
 
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
 
 /** Kompletter Spielstand, Raster als Base64 */
 export interface SaveGame {
@@ -39,6 +40,8 @@ export interface SaveGame {
   veg: { trees: string; bushes: string; dry: string; growth: string; stress: string; drown: string; poison?: string };
   buildings: SavedBuilding[];
   citizens: CitizensSave;
+  /** Flöße (ab Version 4) */
+  rafts?: RaftsSave;
   seasons: SeasonsSave;
   rng: number;
 }
@@ -124,6 +127,7 @@ export function serializeWorld(world: World, name = ''): { data: SaveGame; meta:
       reserved: { ...b.reserved },
     })),
     citizens: world.citizens.save(),
+    rafts: world.rafts.save(),
     seasons: world.seasons.save(),
     rng: world.rnd.state,
   };
@@ -164,6 +168,7 @@ export function restoreWorld(s: SaveGame): World {
   world.veg.soilVersion++;
   world.buildings.restore(s.buildings);
   world.citizens.restore(s.citizens);
+  if (s.rafts) world.rafts.restore(s.rafts);
   world.seasons.restore(s.seasons);
   world.rnd.state = s.rng;
   world.time = s.time;

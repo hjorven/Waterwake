@@ -70,6 +70,19 @@ describe('Spielstand mit Schlamm', () => {
     expect(back.weather).toBe('schlamm');
   });
 
+  it('lädt Spielstände der Version 3 ohne Flöße', () => {
+    const world = World.generate(64, 64, 3);
+    world.settle();
+    const { data } = serializeWorld(world);
+    const old = JSON.parse(JSON.stringify(data));
+    old.v = 3;
+    delete old.rafts;
+    const back = restoreWorld(old);
+    expect(back.rafts.list.length).toBe(0);
+    runDays(back, 1);
+    expect(back.citizens.count()).toBeGreaterThan(0);
+  });
+
   it('lädt alte Spielstände der Version 1 ohne Schmutzfelder', () => {
     const world = World.generate(64, 64, 3);
     world.settle();

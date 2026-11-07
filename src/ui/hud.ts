@@ -567,7 +567,7 @@ export class Hud {
   pushMessages(list: string[]): void {
     for (const text of list) {
       const el = document.createElement('div');
-      const bad = /verdurstet|verhungert|Dürre|Nicht genug|Kein |vertrocknet|aufgebraucht|Hochwasser|weggerissen|ertrunken|gestorben|ausgelöscht|krank|verschmutzt|Schlammflut|eingegangen|Holz ist alle|warten auf|Ohne Arbeiter|nicht genug Wissen|zuerst/.test(text);
+      const bad = /verdurstet|verhungert|Dürre|Nicht genug|Kein |vertrocknet|aufgebraucht|Hochwasser|weggerissen|ertrunken|gestorben|ausgelöscht|krank|verschmutzt|Schlammflut|eingegangen|Holz ist alle|warten auf|Ohne Arbeiter|nicht genug Wissen|zuerst|sitzt fest/.test(text);
       const good = /geboren|Ziel erreicht|fertig\.|wieder gesund|erforscht\./.test(text);
       el.className = `msg${bad ? ' bad' : good ? ' good' : ''}`;
       el.textContent = text;
@@ -610,7 +610,10 @@ export class Hud {
       if (DRINK_SPOTS.includes(b.def) && this.stats) rows.push(`<div class="row${this.stats.waterPollution >= 0.3 ? ' bad' : ''}"><span>Wasser im Speicher</span><b>${pollutionLabel(this.stats.waterPollution)}</b></div>`);
       if (def.powerGen) rows.push(`<div class="row"><span>Strom</span><b>${fmt(b.power)} von ${fmt(def.powerGen)}</b></div>`);
       if (def.powerUse) rows.push(`<div class="row${b.power < 1 ? ' bad' : ''}"><span>Strom</span><b>${b.power >= 1 ? 'versorgt' : `${Math.round(b.power * 100)} % versorgt`}</b></div>`);
-      if (def.range) rows.push(`<div class="row"><span>${def.joy ? 'Wirkungskreis' : 'Umkreis'}</span><b>${def.range} Felder</b></div>`);
+      if (b.def === 'flossanleger') {
+        rows.push(`<div class="row${b.district ? '' : ' bad'}"><span>Bezirk</span><b>${b.district || `kein Lager im Umkreis von ${def.range} Feldern`}</b></div>`);
+        rows.push(`<div class="row${b.raftText?.startsWith('sitzt') || b.raftText?.startsWith('kein') ? ' bad' : ''}"><span>Floß</span><b>${b.raftText ?? ''}</b></div>`);
+      } else if (def.range) rows.push(`<div class="row"><span>${def.joy ? 'Wirkungskreis' : 'Umkreis'}</span><b>${def.range} Felder</b></div>`);
       if (def.floodDepth >= 1.5) rows.push(`<div class="row"><span>Hochwasser</span><b>hält stand</b></div>`);
       else if (def.floodDepth >= 0.9) rows.push(`<div class="row"><span>Hochwasser</span><b>steht auf Pfählen</b></div>`);
     }
