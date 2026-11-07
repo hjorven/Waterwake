@@ -38,6 +38,8 @@ export class WaterSim {
   evaporation = 0;
   /** Volumen, das seit dem letzten Abholen über Senken abgeflossen ist */
   drained = 0;
+  /** Abfluss seit Beginn, wird nie zurückgesetzt (für die Flusskette) */
+  drainedTotal = 0;
   /** Volumen, das seit dem letzten Abholen aus Quellen kam */
   added = 0;
   /** Volumen, das seit dem letzten Abholen verdunstet ist */
@@ -156,6 +158,7 @@ export class WaterSim {
         }
         if (sink[i] && next > 0) {
           this.drained += next;
+          this.drainedTotal += next;
           next = 0;
           mass = 0;
         }

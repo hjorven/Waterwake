@@ -38,6 +38,8 @@ export interface SaveGame {
   custom?: CustomMap;
   /** Volk, fehlt in älteren Spielständen (dann Otter) */
   species?: Species;
+  /** geglätteter Abfluss für die Flusskette, fehlt in älteren Spielständen */
+  outflowAvg?: number;
   ground: string;
   struct: string;
   gate: string;
@@ -89,6 +91,7 @@ export function serializeWorld(world: World, name = ''): { data: SaveGame; meta:
     goalHeld: world.goalHeld,
     custom: world.scenario.custom,
     species: world.species.id,
+    outflowAvg: world.outflowAvg,
     ground: encodeBytes(world.ground),
     struct: encodeBytes(world.struct),
     gate: encodeBytes(world.gate),
@@ -141,6 +144,7 @@ export function restoreWorld(s: SaveGame): World {
   const world = new World({ w: s.w, h: s.h, ground: decodeBytes(s.ground), sources: s.sources.map((x) => ({ ...x })), sinks }, s.seed, scenario);
   // das Volk vor den Gebäuden setzen, damit die Baukosten zum Baustoff passen
   world.setSpecies(s.species ?? speciesOf(scenario));
+  if (typeof s.outflowAvg === 'number' && Number.isFinite(s.outflowAvg)) world.outflowAvg = Math.max(0, s.outflowAvg);
   world.struct.set(decodeBytes(s.struct));
   world.gate.set(decodeBytes(s.gate));
   world.gateOpen.set(decodeBytes(s.gateOpen));

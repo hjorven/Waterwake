@@ -1,4 +1,5 @@
 import { MAX_MAPS, validateMap, type CustomMap } from '../data/custom';
+import type { RiverLink } from '../data/river';
 import type { SaveGame, SaveMeta } from '../sim/save';
 
 /** Lokale Spielstände im Browser (localStorage) */
@@ -159,6 +160,32 @@ export function saveName(name: string): void {
     s.setItem(NAME_KEY, name.trim().slice(0, 20));
   } catch {
     // voll oder gesperrt: dann eben nicht
+  }
+}
+
+const RIVER_KEY = 'waterwake.river';
+
+/** Die Flusskette, der dieser Browser angehört */
+export function loadRiver(): RiverLink | null {
+  const s = storage();
+  if (!s) return null;
+  try {
+    const raw = s.getItem(RIVER_KEY);
+    const v = raw ? (JSON.parse(raw) as Partial<RiverLink>) : null;
+    return v && typeof v.id === 'string' && typeof v.code === 'string' && typeof v.name === 'string' ? { id: v.id, code: v.code, name: v.name } : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveRiver(link: RiverLink | null): void {
+  const s = storage();
+  if (!s) return;
+  try {
+    if (link) s.setItem(RIVER_KEY, JSON.stringify(link));
+    else s.removeItem(RIVER_KEY);
+  } catch {
+    // voll oder gesperrt: die Kette gilt dann nur für diese Sitzung
   }
 }
 
