@@ -1,5 +1,7 @@
 import { BUILDINGS, DAM_WOOD_PER_LEVEL, FLOOD_DESTROY_TIME, FLOOD_REPAIR_TIME, GATE_WOOD, type BuildingId } from '../data/buildings';
+import { GOOD_LABEL, GOODS, type Stock } from '../data/goods';
 import { freeScenario, type Goal, type Scenario } from '../data/maps';
+import { TECH_FOR, TECH_ORDER, TECHS, type TechId } from '../data/tech';
 import { Buildings, type Building } from './buildings';
 import { Citizens, type Env } from './citizens';
 import { Pathfinder } from './pathfinding';
@@ -39,6 +41,8 @@ export const PUMPWERK_RATE = 0.3;
 export const FILTER_RATE = 0.015;
 /** Grundwasser je Sekunde aus einem Brunnen */
 export const WELL_RATE = 0.03;
+/** Sägewerk ohne Strom: Anteil der vollen Geschwindigkeit */
+export const SAW_IDLE_SPEED = 0.4;
 
 export interface PowerStats {
   supply: number;
@@ -54,8 +58,17 @@ export interface WorldStats {
   sick: number;
   housing: number;
   wood: number;
-  berries: number;
+  /** Nahrung aller Art */
+  food: number;
+  /** Vorrat je Ware */
+  goods: Stock;
   storageCap: number;
+  knowledge: number;
+  techs: TechId[];
+  /** es gibt Wissensgebäude oder Wissen, dann wird der Wissens-Chip gezeigt */
+  hasKnowledge: boolean;
+  /** Werkzeug für alle Arbeiter da: alle arbeiten schneller */
+  toolBonus: boolean;
   water: number;
   waterCap: number;
   /** Verschmutzung des gespeicherten Wassers 0..1 */
@@ -102,6 +115,9 @@ export class World implements Env {
   readonly store = { stored: 0, pollution: 0 };
   /** Stromhaushalt, jede Sekunde neu berechnet */
   readonly power: PowerStats & { wheels: number } = { supply: 0, demand: 0, ratio: 1, wheels: 0 };
+  /** gesammeltes Wissen und erforschte Technologien */
+  knowledge = 0;
+  readonly techs = new Set<TechId>();
   readonly seed: number;
   scenario: Scenario;
   weather: Weather = 'normal';
@@ -127,6 +143,9 @@ export class World implements Env {
   private drownedToday = 0;
   private woodWarnAt = -Infinity;
   private floodWarnAt = -Infinity;
+  private woodWarnDay = -Infinity;
+  private plankWarnDay = -Infinity;
+  private staffWarnDay = -Infinity;
   private dirtyWarned = false;
   private poisonedToday = 0;
 
@@ -261,14 +280,70 @@ export class World implements Env {
     return this.power.demand > this.power.wheels + 0.01;
   }
 
-  /** Steht dieser Punkt im Umkreis einer Heilerhütte, in der gerade jemand arbeitet? */
-  healAt(x: number, y: number): boolean {
+  /** Heilwirkung an diesem Punkt: 0 keine, 1 Heilerhütte mit Pfleger, 2 mit Kräutern */
+  healAt(x: number, y: number): number {
+    let best = 0;
     for (const b of this.buildings.alive()) {
       if (b.def !== 'heiler' || !b.built) continue;
       const c = this.buildings.center(b);
-      if (Math.hypot(c.x - x, c.y - y) <= BUILDINGS.heiler.range && this.citizens.workingAt(b.id, 'heal')) return true;
+      if (Math.hypot(c.x - x, c.y - y) > BUILDINGS.heiler.range) continue;
+      const shift = this.citizens.shiftAt(b.id, 'heal');
+      if (shift > best) best = shift;
     }
+    return best;
+  }
+
+  addKnowledge(amount: number): void {
+    this.knowledge += amount;
+  }
+
+  /** Arbeitsgeschwindigkeit einer Verarbeitung: das Sägewerk braucht Strom */
+  craftSpeed(b: Building): number {
+    const def = BUILDINGS[b.def];
+    if (def.powerUse <= 0) return 1;
+    return SAW_IDLE_SPEED + (1 - SAW_IDLE_SPEED) * this.power.ratio;
+  }
+
+  /** Eine Schule mit Lehrern lässt die Jungen schneller erwachsen werden */
+  hasSchool(): boolean {
+    for (const b of this.buildings.alive()) if (b.def === 'schule' && b.built && b.workers.length > 0) return true;
     return false;
+  }
+
+  /** Mit Sternwarte ist die Vorhersage genau */
+  hasObservatory(): boolean {
+    for (const b of this.buildings.alive()) if (b.def === 'sternwarte' && b.built) return true;
+    return false;
+  }
+
+  // --- Forschung ---------------------------------------------------------------
+
+  isUnlocked(id: BuildingId): boolean {
+    const tech = TECH_FOR[id];
+    return tech === undefined || this.techs.has(tech);
+  }
+
+  /** Technologie erforschen, false wenn Wissen oder Voraussetzung fehlen */
+  research(id: TechId): boolean {
+    const t = TECHS[id];
+    if (!t || this.techs.has(id)) return false;
+    if (t.requires && !this.techs.has(t.requires)) {
+      this.log(`${t.name}: zuerst ${TECHS[t.requires].name} erforschen.`);
+      return false;
+    }
+    if (this.knowledge < t.cost) {
+      this.log(`${t.name}: nicht genug Wissen (${t.cost} nötig).`);
+      return false;
+    }
+    this.knowledge -= t.cost;
+    this.techs.add(id);
+    this.log(`${t.name} erforscht. Neu: ${t.unlocks.map((b) => BUILDINGS[b].name).join(', ')}.`);
+    return true;
+  }
+
+  /** Alles freischalten (Baukasten und Tests) */
+  unlockAll(): void {
+    for (const t of TECH_ORDER) this.techs.add(t);
   }
 
   height(i: number): number {
@@ -279,7 +354,7 @@ export class World implements Env {
     return this.buildings.occ[i] < 0;
   }
 
-  /** Wie viele verschiedene Freude-Gebäude diesen Punkt erreichen */
+  /** Wie viele verschiedene Freude-Gebäude diesen Punkt erreichen; die Schenke zählt nur mit Wirt */
   joyAt(x: number, y: number): number {
     const seen = new Set<BuildingId>();
     for (const b of this.buildings.alive()) {
@@ -287,7 +362,9 @@ export class World implements Env {
       const def = BUILDINGS[b.def];
       if (!def.joy || seen.has(b.def)) continue;
       const c = this.buildings.center(b);
-      if (Math.hypot(c.x - x, c.y - y) <= def.range) seen.add(b.def);
+      if (Math.hypot(c.x - x, c.y - y) > def.range) continue;
+      if (def.workers > 0 && !this.citizens.shiftAt(b.id, 'serve')) continue;
+      seen.add(b.def);
     }
     return seen.size;
   }
@@ -300,7 +377,7 @@ export class World implements Env {
     return 1;
   }
 
-  private canStep(a: number, b: number): boolean {
+  canStep(a: number, b: number): boolean {
     const d = this.water.depth;
     if (d[a] > 0.25 && d[b] > 0.25) return true;
     return Math.abs(this.height(a) - this.height(b)) <= 1;
@@ -356,6 +433,7 @@ export class World implements Env {
       this.floodCheck(1);
       this.updatePower();
       this.runMachines(1);
+      this.growFields(1);
       this.checkOutcome();
     }
     this.growTimer += dt;
@@ -379,6 +457,7 @@ export class World implements Env {
         this.poisonedToday = 0;
       }
       this.woodWarning();
+      this.staffWarning();
     }
     this.citizens.step(dt);
   }
@@ -449,19 +528,60 @@ export class World implements Env {
     }
   }
 
-  /** Baustellen warten auf Holz, aber es gibt keines und keinen Holzfäller */
+  /** Felder und Kräutergärten reifen auf feuchtem Boden */
+  private growFields(dt: number): void {
+    for (const b of this.buildings.alive()) {
+      const h = BUILDINGS[b.def].harvest;
+      if (!h || !b.built || b.growth >= 1) continue;
+      let moist = 0;
+      const cells = this.buildings.cells(b);
+      for (const i of cells) moist += this.veg.moist[i];
+      moist /= cells.length * 255;
+      if (moist <= 0) continue;
+      b.growth = Math.min(1, b.growth + (dt * (0.4 + 0.6 * moist)) / (h.days * DAY));
+    }
+  }
+
+  /** Alle Erwachsenen haben Arbeit, aber Gebäude stehen ohne Arbeiter da */
+  private staffWarning(): void {
+    if (this.lastDay - this.staffWarnDay < 3) return;
+    let free = 0;
+    for (const c of this.citizens.alive()) if (!c.child && c.workplace < 0) free++;
+    if (free > 0) return;
+    const empty: string[] = [];
+    for (const b of this.buildings.alive()) {
+      if (b.built && b.workers.length === 0 && BUILDINGS[b.def].workers > 0) empty.push(BUILDINGS[b.def].name);
+    }
+    if (empty.length === 0) return;
+    this.staffWarnDay = this.lastDay;
+    const list = empty.length <= 3 ? empty.join(', ') : `${empty.slice(0, 3).join(', ')} und ${empty.length - 3} weitere`;
+    this.log(`Ohne Arbeiter: ${list}. Mehr Hütten bringen Nachwuchs, Abreißen gibt Arbeiter frei.`);
+  }
+
+  /** Baustellen warten auf Holz oder Bretter, aber es gibt keine und niemand macht Nachschub */
   private woodWarning(): void {
-    let waiting = false;
+    let waitWood = false;
+    let waitPlanks = false;
     let woodcutter = false;
+    let sawmill = false;
     for (const b of this.buildings.alive()) {
       if (b.built) {
         if (b.def === 'holzfaeller') woodcutter = true;
-      } else if (b.woodDelivered < BUILDINGS[b.def].wood) {
-        waiting = true;
+        if (b.def === 'saegewerk') sawmill = true;
+      } else {
+        if (b.delivered.holz < (BUILDINGS[b.def].cost.holz ?? 0)) waitWood = true;
+        if (b.delivered.bretter < (BUILDINGS[b.def].cost.bretter ?? 0)) waitPlanks = true;
       }
     }
-    if (!waiting || woodcutter || this.buildings.total('holz') >= 1) return;
-    this.log('Das Holz ist alle, Baustellen warten. Ein Holzfäller schafft Nachschub, Abreißen gibt Holz zurück.');
+    // Warnungen höchstens alle drei Tage wiederholen
+    if (waitWood && !woodcutter && this.buildings.total('holz') < 1 && this.lastDay - this.woodWarnDay >= 3) {
+      this.woodWarnDay = this.lastDay;
+      this.log('Das Holz ist alle, Baustellen warten. Ein Holzfäller schafft Nachschub, Abreißen gibt Holz zurück.');
+    }
+    if (waitPlanks && !sawmill && this.buildings.total('bretter') < 1 && this.lastDay - this.plankWarnDay >= 3) {
+      this.plankWarnDay = this.lastDay;
+      this.log('Baustellen warten auf Bretter. Ein Sägewerk macht aus Holz Bretter.');
+    }
   }
 
   /** Gebäude im tiefen Wasser nehmen Schaden und werden irgendwann weggerissen */
@@ -502,9 +622,8 @@ export class World implements Env {
     if (this.store.stored > cap) this.store.stored = cap;
     this.lostToFlood++;
     const lost: string[] = [];
-    if (b.stock.holz > 0) lost.push(`${Math.floor(b.stock.holz)} Holz`);
-    if (b.stock.beeren > 0) lost.push(`${Math.floor(b.stock.beeren)} Beeren`);
-    this.log(`${def.name} wurde vom Hochwasser weggerissen${lost.length ? `, samt ${lost.join(' und ')}` : ''}.`);
+    for (const g of GOODS) if (b.stock[g] >= 1) lost.push(`${Math.floor(b.stock[g])} ${GOOD_LABEL[g]}`);
+    this.log(`${def.name} wurde vom Hochwasser weggerissen${lost.length ? `, samt ${lost.join(', ')}` : ''}.`);
   }
 
   /** Spielziel und Untergang prüfen */
@@ -525,21 +644,27 @@ export class World implements Env {
   }
 
   stats(): WorldStats {
+    const goods = this.buildings.totals();
     return {
       population: this.citizens.count(),
       children: this.citizens.children(),
       sick: this.citizens.sick(),
       housing: this.buildings.housing(),
-      wood: this.buildings.total('holz'),
-      berries: this.buildings.total('beeren'),
+      wood: goods.holz,
+      food: goods.beeren + goods.fisch + goods.brot,
+      goods,
       storageCap: this.buildings.storageCapacity(),
+      knowledge: this.knowledge,
+      techs: TECH_ORDER.filter((t) => this.techs.has(t)),
+      hasKnowledge: this.knowledge > 0 || this.techs.size > 0 || [...this.buildings.alive()].some((b) => BUILDINGS[b.def].knowledge > 0),
+      toolBonus: this.citizens.toolBonus,
       water: this.store.stored,
       waterCap: this.buildings.waterCapacity(),
       waterPollution: this.store.pollution,
       riverPollution: this.water.maxPollution(),
       power: { supply: this.power.supply, demand: this.power.demand, ratio: this.power.ratio },
       hasPower: [...this.buildings.alive()].some((b) => BUILDINGS[b.def].category === 'strom'),
-      season: this.seasons.info(),
+      season: this.seasons.info(this.hasObservatory()),
       mood: this.citizens.mood(),
       births: this.citizens.births,
       deaths: this.citizens.deaths,
@@ -576,7 +701,7 @@ export class World implements Env {
       }
       return false;
     }
-    this.buildings.takeWood(amount, i % this.w, (i / this.w) | 0);
+    this.buildings.takeGood('holz', amount, i % this.w, (i / this.w) | 0);
     return true;
   }
 
@@ -585,6 +710,13 @@ export class World implements Env {
    * etwas geändert hat.
    */
   apply(tool: Tool, i: number, damHeight = 2): boolean {
+    const changed = this.applyTool(tool, i, damHeight);
+    // wer auf der Zelle steht und nicht mehr herunterkommt, tritt beiseite
+    if (changed) this.citizens.evict([i]);
+    return changed;
+  }
+
+  private applyTool(tool: Tool, i: number, damHeight: number): boolean {
     if (i < 0 || i >= this.ground.length) return false;
     if (this.buildings.occ[i] >= 0) return false;
     const g = this.ground[i];
@@ -599,7 +731,7 @@ export class World implements Env {
         }
         return false;
       case 'absenken':
-        if (s > 0 || this.gate[i]) return this.apply('abreissen', i);
+        if (s > 0 || this.gate[i]) return this.applyTool('abreissen', i, damHeight);
         if (g > 0) {
           this.ground[i] = g - 1;
           this.water.terrain[i] = g - 1;
@@ -649,6 +781,7 @@ export class World implements Env {
   // --- Gebäude ------------------------------------------------------------------
 
   placementError(id: BuildingId, x: number, y: number): string | null {
+    if (!this.isUnlocked(id)) return `zuerst ${TECHS[TECH_FOR[id]!].name} erforschen`;
     return this.buildings.canPlace(id, x, y, {
       ground: this.ground,
       struct: this.struct,
@@ -657,17 +790,21 @@ export class World implements Env {
     });
   }
 
-  place(id: BuildingId, x: number, y: number): Building | null {
+  /** Gebäude setzen (prebuilt: sofort fertig, etwa auf Kampagnenkarten) */
+  place(id: BuildingId, x: number, y: number, prebuilt = false): Building | null {
     const err = this.placementError(id, x, y);
     if (err) {
       this.log(`${BUILDINGS[id].name}: ${err}.`);
       return null;
     }
-    const b = this.buildings.place(id, x, y);
-    for (const i of this.buildings.cells(b)) {
+    const b = this.buildings.place(id, x, y, prebuilt);
+    const cells = this.buildings.cells(b);
+    for (const i of cells) {
       this.veg.clear(i);
       this.reserved.delete(i);
     }
+    // wer darunter stand, tritt beiseite
+    this.citizens.evict(cells);
     return b;
   }
 
@@ -679,9 +816,10 @@ export class World implements Env {
     if (!b) return false;
     this.citizens.detachBuilding(id);
     const def = BUILDINGS[b.def];
-    const refund = Math.floor(b.woodDelivered / 2) + b.stock.holz;
-    if (refund > 0) this.buildings.putGood('holz', refund, b.x, b.y);
-    if (b.stock.beeren > 0) this.buildings.putGood('beeren', b.stock.beeren, b.x, b.y);
+    for (const g of GOODS) {
+      const refund = Math.floor(b.delivered[g] / 2) + b.stock[g];
+      if (refund > 0) this.buildings.putGood(g, refund, b.x, b.y);
+    }
     const cap = this.buildings.waterCapacity();
     if (this.store.stored > cap) this.store.stored = cap;
     this.log(`${def.name} abgerissen.`);

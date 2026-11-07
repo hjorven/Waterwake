@@ -375,7 +375,7 @@ svg {
 
 .card {
   flex: none;
-  width: 86px;
+  width: 94px;
   min-height: 84px;
   display: flex;
   flex-direction: column;
@@ -996,4 +996,48 @@ button.start-card:hover {
   .toasts {
     top: 120px;
   }
+}
+
+/* Forschung und gesperrte Gebäude */
+.card {
+  position: relative;
+}
+
+.card-lock {
+  display: none;
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  color: var(--ink-soft);
+}
+
+.card-lock svg {
+  width: 14px;
+  height: 14px;
+}
+
+.card.locked {
+  opacity: 0.55;
+}
+
+.card.locked .card-lock {
+  display: block;
+}
+
+.card.locked .card-cost {
+  color: var(--ink-soft);
+  font-weight: 400;
+}
+
+.card.done {
+  background: #d9ead3;
+}
+
+.card.done .card-cost {
+  color: #2e7d32;
+  font-weight: 600;
+}
+
+.row.open b {
+  color: var(--bad);
 }

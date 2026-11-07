@@ -1,13 +1,13 @@
 import * as THREE from 'three';
-import { BUILDINGS, type BuildingId } from '../data/buildings';
+import type { BuildingId } from '../data/buildings';
 import { CITIZEN_STRIDE, type BuildingSnap } from '../sim/protocol';
 import {
   BUILDING_IDS,
-  basketGeometry,
   berriesGeometry,
   buildingGeometry,
   bushGeometry,
-  logGeometry,
+  CARRY_CODES,
+  carryGeometry,
   otterGeometry,
   siteGeometry,
   treeGeometry,
@@ -101,8 +101,8 @@ export class InstanceRenderer {
   private readonly buildings = new Map<BuildingId, Pool>();
   private readonly sites = new Map<number, Pool>();
   private readonly otters: Pool;
-  private readonly logs: Pool;
-  private readonly baskets: Pool;
+  /** getragene Waren je Kennziffer */
+  private readonly carried = new Map<number, Pool>();
   private height = new Float32Array(0);
   private tracks = new Map<number, CitizenTrack>();
   private snapTime = 0;
@@ -118,8 +118,7 @@ export class InstanceRenderer {
     for (const id of BUILDING_IDS) this.buildings.set(id, new Pool(this.group, buildingGeometry(id), 32));
     for (const size of [1, 2]) this.sites.set(size, new Pool(this.group, siteGeometry(size), 16));
     this.otters = new Pool(this.group, otterGeometry(), 64, true);
-    this.logs = new Pool(this.group, logGeometry(), 64);
-    this.baskets = new Pool(this.group, basketGeometry(), 64);
+    for (const code of CARRY_CODES) this.carried.set(code, new Pool(this.group, carryGeometry(code), 16));
   }
 
   setTerrain(ground: Uint8Array<ArrayBufferLike>, struct: Uint8Array<ArrayBufferLike>): void {
@@ -205,9 +204,7 @@ export class InstanceRenderer {
         setInstance(pool.mesh, pool.mesh.count++, x, y, z, 0, 1);
       } else {
         const pool = this.sites.get(b.size)!;
-        const def = BUILDINGS[b.def];
-        const delivered = def.wood > 0 ? b.woodDelivered / def.wood : 1;
-        setInstance(pool.mesh, pool.mesh.count++, x, y, z, 0, 1, 0.25 + 0.75 * Math.max(delivered * 0.4, b.progress));
+        setInstance(pool.mesh, pool.mesh.count++, x, y, z, 0, 1, 0.25 + 0.75 * Math.max(b.delivered * 0.4, b.progress));
       }
     }
     for (const pool of this.buildings.values()) pool.mesh.instanceMatrix.needsUpdate = true;
@@ -247,12 +244,12 @@ export class InstanceRenderer {
   update(now: number): void {
     const n = this.tracks.size;
     this.otters.ensure(n);
-    this.logs.ensure(n);
-    this.baskets.ensure(n);
+    for (const pool of this.carried.values()) {
+      pool.ensure(n);
+      pool.mesh.count = 0;
+    }
     const a = Math.min(1, (now - this.snapTime) / this.snapInterval);
     let i = 0;
-    let nl = 0;
-    let nb = 0;
     for (const t of this.tracks.values()) {
       const x = t.px + (t.x - t.px) * a;
       const y = t.py + (t.y - t.py) * a;
@@ -265,16 +262,13 @@ export class InstanceRenderer {
       // kranke Otter sind blass und grünlich
       color.setRGB(t.sick ? 0.8 : 1, t.sick ? 1 : 1, t.sick ? 0.75 : 1);
       this.otters.mesh.setColorAt(i, color);
-      if (t.carry === 1) setInstance(this.logs.mesh, nl++, x, z + bob, y, t.heading, t.scale);
-      else if (t.carry === 2) setInstance(this.baskets.mesh, nb++, x, z + bob, y, t.heading, t.scale);
+      const carry = this.carried.get(t.carry);
+      if (carry) setInstance(carry.mesh, carry.mesh.count++, x, z + bob, y, t.heading, t.scale);
       i++;
     }
     this.otters.mesh.count = i;
     this.otters.mesh.instanceMatrix.needsUpdate = true;
     if (this.otters.mesh.instanceColor) this.otters.mesh.instanceColor.needsUpdate = true;
-    this.logs.mesh.count = nl;
-    this.logs.mesh.instanceMatrix.needsUpdate = true;
-    this.baskets.mesh.count = nb;
-    this.baskets.mesh.instanceMatrix.needsUpdate = true;
+    for (const pool of this.carried.values()) pool.mesh.instanceMatrix.needsUpdate = true;
   }
 }

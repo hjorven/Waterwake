@@ -1,0 +1,153 @@
+import type { BuildingId } from './buildings';
+
+export type TechId =
+  | 'schrift'
+  | 'sternkunde'
+  | 'heilkunde'
+  | 'brunnenbau'
+  | 'fischfang'
+  | 'teichwirtschaft'
+  | 'ackerbau'
+  | 'backkunst'
+  | 'zimmerei'
+  | 'pfahlbau'
+  | 'schnitzkunst'
+  | 'geselligkeit'
+  | 'muehlenbau'
+  | 'maschinen';
+
+export interface TechDef {
+  id: TechId;
+  name: string;
+  desc: string;
+  /** Kosten in Wissen */
+  cost: number;
+  /** muss vorher erforscht sein */
+  requires: TechId | null;
+  unlocks: BuildingId[];
+}
+
+/** Technologien in der Reihenfolge der Forschungstafel */
+export const TECHS: Record<TechId, TechDef> = {
+  schrift: {
+    id: 'schrift',
+    name: 'Schrift',
+    desc: 'Die Schule bringt den Jungen Lesen und Zählen bei. Sie werden schneller erwachsen, und die Lehrer sammeln Wissen.',
+    cost: 8,
+    requires: null,
+    unlocks: ['schule'],
+  },
+  geselligkeit: {
+    id: 'geselligkeit',
+    name: 'Geselligkeit',
+    desc: 'Abende am Lagerfeuer und eine Schenke mit Beerensaft machen den Clan zufriedener.',
+    cost: 8,
+    requires: null,
+    unlocks: ['lagerfeuer', 'beerenschenke'],
+  },
+  heilkunde: {
+    id: 'heilkunde',
+    name: 'Heilkunde',
+    desc: 'Heilerhütte und Kräutergarten pflegen kranke Otter gesund. Wichtig vor der ersten Schlammflut.',
+    cost: 10,
+    requires: null,
+    unlocks: ['heiler', 'kraeutergarten'],
+  },
+  fischfang: {
+    id: 'fischfang',
+    name: 'Fischfang',
+    desc: 'Die Fischerhütte holt Fisch aus dem Fluss, solange er tief genug und sauber ist.',
+    cost: 10,
+    requires: null,
+    unlocks: ['fischer'],
+  },
+  ackerbau: {
+    id: 'ackerbau',
+    name: 'Ackerbau',
+    desc: 'Felder auf feuchtem Boden tragen Korn, der Beerengärtner pflanzt neue Sträucher.',
+    cost: 12,
+    requires: null,
+    unlocks: ['feld', 'beerengaertner'],
+  },
+  brunnenbau: {
+    id: 'brunnenbau',
+    name: 'Brunnenbau',
+    desc: 'Brunnen holen Grundwasser auch in der Dürre, die Zisterne speichert große Vorräte.',
+    cost: 12,
+    requires: null,
+    unlocks: ['brunnen', 'zisterne'],
+  },
+  zimmerei: {
+    id: 'zimmerei',
+    name: 'Zimmerei',
+    desc: 'Das Sägewerk macht aus Holz Bretter für größere Bauten, die Werkstatt fertigt Werkzeug, mit dem alle schneller arbeiten.',
+    cost: 12,
+    requires: null,
+    unlocks: ['saegewerk', 'werkstatt'],
+  },
+  sternkunde: {
+    id: 'sternkunde',
+    name: 'Sternkunde',
+    desc: 'Die Sternwarte liest am Himmel ab, wie lange die nächste Jahreszeit genau dauert.',
+    cost: 16,
+    requires: 'schrift',
+    unlocks: ['sternwarte'],
+  },
+  teichwirtschaft: {
+    id: 'teichwirtschaft',
+    name: 'Teichwirtschaft',
+    desc: 'Ein Fischteich wird aus dem Wasserspeicher gespeist und liefert Fisch auch in der Dürre.',
+    cost: 16,
+    requires: 'fischfang',
+    unlocks: ['fischteich'],
+  },
+  backkunst: {
+    id: 'backkunst',
+    name: 'Backkunst',
+    desc: 'Die Bäckerei backt aus Korn Brot, die beste Nahrung des Clans.',
+    cost: 16,
+    requires: 'ackerbau',
+    unlocks: ['baeckerei'],
+  },
+  schnitzkunst: {
+    id: 'schnitzkunst',
+    name: 'Schnitzkunst',
+    desc: 'Statue und Spielplatz aus geschnitztem Holz erfreuen Alt und Jung.',
+    cost: 14,
+    requires: 'zimmerei',
+    unlocks: ['statue', 'spielplatz'],
+  },
+  pfahlbau: {
+    id: 'pfahlbau',
+    name: 'Pfahlbau',
+    desc: 'Mit Brettern entstehen das Langhaus für zehn Otter, das hochwassersichere Pfahlhaus und der Aussichtsturm.',
+    cost: 18,
+    requires: 'zimmerei',
+    unlocks: ['pfahlhaus', 'langhaus', 'aussichtsturm'],
+  },
+  muehlenbau: {
+    id: 'muehlenbau',
+    name: 'Mühlenbau',
+    desc: 'Wasserräder machen aus der Strömung Strom, Laufräder liefern Notstrom.',
+    cost: 16,
+    requires: 'zimmerei',
+    unlocks: ['wasserrad', 'laufrad'],
+  },
+  maschinen: {
+    id: 'maschinen',
+    name: 'Maschinen',
+    desc: 'Pumpwerk und Sandfilter laufen mit Strom ganz ohne Arbeiter.',
+    cost: 24,
+    requires: 'muehlenbau',
+    unlocks: ['pumpwerk', 'sandfilter'],
+  },
+};
+
+export const TECH_ORDER: TechId[] = [
+  'schrift', 'geselligkeit', 'heilkunde', 'fischfang', 'ackerbau', 'brunnenbau', 'zimmerei',
+  'sternkunde', 'teichwirtschaft', 'backkunst', 'schnitzkunst', 'pfahlbau', 'muehlenbau', 'maschinen',
+];
+
+/** Technologie, die ein Gebäude freischaltet (fehlt bei Gebäuden, die von Anfang an gehen) */
+export const TECH_FOR: Partial<Record<BuildingId, TechId>> = {};
+for (const t of TECH_ORDER) for (const b of TECHS[t].unlocks) TECH_FOR[b] = t;

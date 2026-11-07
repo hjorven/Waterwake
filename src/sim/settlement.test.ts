@@ -26,11 +26,32 @@ function runDays(world: World, days: number): void {
   for (let i = 0; i < steps; i++) world.step(0.05);
 }
 
-function setup(seed = 7): { world: World; lx: number; ly: number } {
+function setup(seed = 7, unlock = true): { world: World; lx: number; ly: number } {
   const world = World.generate(96, 96, seed);
+  if (unlock) world.unlockAll();
   world.settle();
   const lager = [...world.buildings.alive()][0];
   return { world, lx: lager.x, ly: lager.y };
+}
+
+/** Gebäude fertig hinstellen, ohne Bauzeit und Baustoffe */
+function placeBuilt(world: World, id: BuildingId, cx: number, cy: number, radius = 16): boolean {
+  for (let r = 1; r <= radius; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const x = cx + dx;
+        const y = cy + dy;
+        if (x < 1 || y < 1 || x >= world.w - 2 || y >= world.h - 2) continue;
+        if (world.place(id, x, y, true)) return true;
+      }
+    }
+  }
+  return false;
+}
+
+function lagerOf(world: World) {
+  return [...world.buildings.alive()].find((b) => b.def === 'lager')!;
 }
 
 describe('Siedlung', { timeout: 30000 }, () => {
@@ -50,6 +71,33 @@ describe('Siedlung', { timeout: 30000 }, () => {
     }
     expect(trees).toBeGreaterThan(80);
     expect(bushes).toBeGreaterThan(8);
+  });
+
+  it('Bewohner unter einem neuen Gebäude oder Damm treten beiseite', () => {
+    const { world } = setup();
+    const w = world.w;
+    // Hütte genau auf einen Otter setzen
+    let placed = 0;
+    for (const c of world.citizens.list) {
+      const x = Math.floor(c.x);
+      const y = Math.floor(c.y);
+      if (!world.place('huette', x, y)) continue;
+      placed++;
+      const cell = Math.floor(c.y) * w + Math.floor(c.x);
+      expect(world.walkable(cell)).toBe(true);
+      expect(Math.floor(c.x) === x && Math.floor(c.y) === y).toBe(false);
+      expect(c.state).toBe('idle');
+      break;
+    }
+    expect(placed).toBe(1);
+    // Damm unter einem Otter: er steht danach daneben
+    const other = world.citizens.list.find((c) => world.walkable(Math.floor(c.y) * w + Math.floor(c.x)))!;
+    const i = Math.floor(other.y) * w + Math.floor(other.x);
+    expect(world.apply('damm', i, 3)).toBe(true);
+    expect(Math.floor(other.y) * w + Math.floor(other.x)).not.toBe(i);
+    // nach ein paar Tagen ist niemand verdurstet
+    runDays(world, 2);
+    expect(world.citizens.count()).toBe(START_OTTERS);
   });
 
   it('liefert Holz an eine Baustelle und baut sie fertig', () => {
@@ -324,5 +372,94 @@ describe('Siedlung', { timeout: 30000 }, () => {
     runDays(world, 0.1);
     expect(world.outcome).toBe('lost');
     expect(world.messages.join(' ')).toContain('ausgelöscht');
+  });
+
+  it('Bibliothek sammelt Wissen, Forschung schaltet Gebäude frei', () => {
+    const { world, lx, ly } = setup(7, false);
+    world.forceWeather('normal');
+    expect(world.placementError('lagerfeuer', lx + 4, ly)).toContain('erforschen');
+    expect(world.research('geselligkeit')).toBe(false);
+    expect(placeNear(world, 'bibliothek', lx, ly)).toBe(true);
+    runDays(world, 6);
+    expect(world.knowledge).toBeGreaterThanOrEqual(8);
+    expect(world.research('geselligkeit')).toBe(true);
+    expect(world.techs.has('geselligkeit')).toBe(true);
+    expect(world.research('sternkunde')).toBe(false); // braucht Schrift
+    expect(placeNear(world, 'lagerfeuer', lx, ly)).toBe(true);
+    expect(world.placementError('pfahlhaus', lx + 6, ly)).toContain('Pfahlbau');
+  });
+
+  it('Sägewerk macht Bretter, damit wird ein Pfahlhaus gebaut', () => {
+    const { world, lx, ly } = setup();
+    world.forceWeather('normal');
+    placeNear(world, 'holzfaeller', lx, ly);
+    placeNear(world, 'saegewerk', lx, ly);
+    placeNear(world, 'pfahlhaus', lx, ly);
+    runDays(world, 9);
+    const house = [...world.buildings.alive()].find((b) => b.def === 'pfahlhaus')!;
+    expect(house.delivered.bretter + world.buildings.total('bretter')).toBeGreaterThan(0);
+    expect(house.built).toBe(true);
+  });
+
+  it('der Fischer fängt Fisch, in der Dürre nicht mehr', () => {
+    const { world, lx, ly } = setup();
+    world.forceWeather('normal');
+    expect(placeNear(world, 'fischer', lx, ly, 24)).toBe(true);
+    runDays(world, 4);
+    expect(world.buildings.total('fisch')).toBeGreaterThan(0);
+    world.forceWeather('duerre');
+    runDays(world, 6);
+    lagerOf(world).stock.fisch = 0;
+    runDays(world, 2);
+    expect(world.buildings.total('fisch')).toBe(0);
+  });
+
+  it('Feld und Bäckerei: aus Korn wird Brot', () => {
+    const { world, lx, ly } = setup();
+    world.forceWeather('normal');
+    placeNear(world, 'feld', lx, ly);
+    expect(placeBuilt(world, 'baeckerei', lx, ly)).toBe(true);
+    runDays(world, 9);
+    const field = [...world.buildings.alive()].find((b) => b.def === 'feld')!;
+    expect(field.built).toBe(true);
+    const goods = world.buildings.totals();
+    expect(goods.brot + goods.korn).toBeGreaterThan(0);
+    expect(goods.brot).toBeGreaterThan(0);
+  });
+
+  it('Werkstatt liefert Werkzeug, mit Werkzeug für alle gibt es den Bonus', () => {
+    const { world, lx, ly } = setup();
+    world.forceWeather('normal');
+    expect(placeBuilt(world, 'werkstatt', lx, ly)).toBe(true);
+    placeNear(world, 'holzfaeller', lx, ly);
+    runDays(world, 7);
+    expect(world.buildings.total('werkzeug') + (world.citizens.toolBonus ? 1 : 0)).toBeGreaterThan(0);
+    expect(world.citizens.toolBonus).toBe(true);
+  });
+
+  it('der Beerengärtner pflanzt neue Sträucher', () => {
+    const { world, lx, ly } = setup();
+    world.forceWeather('normal');
+    const count = () => {
+      let n = 0;
+      for (let i = 0; i < world.veg.bushes.length; i++) if (world.veg.bushes[i]) n++;
+      return n;
+    };
+    const before = count();
+    placeNear(world, 'beerengaertner', lx, ly);
+    runDays(world, 5);
+    expect(count()).toBeGreaterThan(before + 3);
+  });
+
+  it('Schule und Sternwarte: Junge wachsen schneller, Vorhersage wird genau', () => {
+    const { world, lx, ly } = setup();
+    world.forceWeather('normal');
+    world.buildings.place('schule', lx - 4, ly, true);
+    world.buildings.place('sternwarte', lx - 6, ly, true);
+    const kid = world.citizens.spawn(lx - 2, ly + 2, { child: true });
+    const info = world.stats().season;
+    expect(info.nextMin).toBe(info.nextMax);
+    runDays(world, 2.1);
+    expect(kid.age).toBeGreaterThanOrEqual(2.9);
   });
 });

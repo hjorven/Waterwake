@@ -1,6 +1,10 @@
+import type { Good, Stock } from './goods';
+
 export type BuildingId =
   | 'lager'
   | 'huette'
+  | 'pfahlhaus'
+  | 'langhaus'
   | 'pumpe'
   | 'tank'
   | 'sammler'
@@ -14,10 +18,36 @@ export type BuildingId =
   | 'wasserrad'
   | 'laufrad'
   | 'pumpwerk'
-  | 'sandfilter';
+  | 'sandfilter'
+  | 'bibliothek'
+  | 'schule'
+  | 'sternwarte'
+  | 'saegewerk'
+  | 'werkstatt'
+  | 'kraeutergarten'
+  | 'fischer'
+  | 'fischteich'
+  | 'beerengaertner'
+  | 'feld'
+  | 'baeckerei'
+  | 'lagerfeuer'
+  | 'beerenschenke'
+  | 'statue'
+  | 'spielplatz'
+  | 'aussichtsturm';
 
 /** Reiter im Baumenü */
-export type BuildingCategory = 'siedlung' | 'versorgung' | 'strom';
+export type BuildingCategory = 'siedlung' | 'freude' | 'versorgung' | 'nahrung' | 'strom';
+
+/** Verarbeitung: Arbeiter holt die Zutat aus dem Lager und bringt das Erzeugnis zurück */
+export interface Recipe {
+  input: Good;
+  inAmount: number;
+  output: Good;
+  outAmount: number;
+  /** Arbeitszeit je Durchgang in Sekunden */
+  time: number;
+}
 
 export interface BuildingDef {
   id: BuildingId;
@@ -25,8 +55,8 @@ export interface BuildingDef {
   desc: string;
   /** Grundfläche size x size Zellen */
   size: number;
-  /** Baukosten in Holz */
-  wood: number;
+  /** Baukosten je Ware */
+  cost: Partial<Stock>;
   /** Arbeitsplätze */
   workers: number;
   /** Arbeitsradius in Zellen (bei Freude-Gebäuden: Wirkungskreis) */
@@ -51,310 +81,376 @@ export interface BuildingDef {
   powerGen: number;
   /** Strombedarf im Betrieb */
   powerUse: number;
+  /** Wissen je Schicht eines Arbeiters */
+  knowledge: number;
+  recipe: Recipe | null;
+  /** Ernte: Tage bis zur Reife, Ware und Menge je Ernte (Feld, Kräutergarten) */
+  harvest: { days: number; good: Good; amount: number } | null;
 }
 
-const BASE = { category: 'siedlung' as BuildingCategory, powerGen: 0, powerUse: 0 };
+type Partial_ = Partial<Omit<BuildingDef, 'id'>> & Pick<BuildingDef, 'name' | 'desc'>;
 
-export const BUILDINGS: Record<BuildingId, BuildingDef> = {
-  lager: {
-    ...BASE,
-    id: 'lager',
-    name: 'Lager',
-    desc: 'Nimmt Holz und Beeren auf. Bewohner essen hier.',
-    size: 2,
-    wood: 12,
+function def(id: BuildingId, p: Partial_): BuildingDef {
+  return {
+    id,
+    size: 1,
+    cost: {},
     workers: 0,
     range: 0,
     housing: 0,
     waterCap: 0,
-    storage: 40,
-    needsWater: false,
-    buildTime: 20,
-    joy: false,
-    floodDepth: 0.9,
-  },
-  huette: {
-    ...BASE,
-    id: 'huette',
-    name: 'Wohnhütte',
-    desc: 'Vier Otter schlafen hier. Ohne Hütte sind sie unglücklich und arbeiten langsamer.',
-    size: 1,
-    wood: 8,
-    workers: 0,
-    range: 0,
-    housing: 4,
-    waterCap: 0,
     storage: 0,
     needsWater: false,
-    buildTime: 15,
-    joy: false,
-    floodDepth: 0.4,
-  },
-  pumpe: {
-    ...BASE,
-    category: 'versorgung',
-    id: 'pumpe',
-    name: 'Pumpe',
-    desc: 'Pumpt Wasser aus dem Fluss nebenan in den Speicher. Trinkstelle. Steht auf Pfählen und übersteht Hochwasser.',
-    size: 1,
-    wood: 6,
-    workers: 1,
-    range: 0,
-    housing: 0,
-    waterCap: 8,
-    storage: 0,
-    needsWater: true,
     buildTime: 12,
     joy: false,
-    floodDepth: 1.6,
-  },
-  tank: {
-    ...BASE,
-    category: 'versorgung',
-    id: 'tank',
-    name: 'Wassertank',
-    desc: 'Speichert Wasser für die Dürre. Trinkstelle.',
-    size: 1,
-    wood: 10,
-    workers: 0,
-    range: 0,
-    housing: 0,
-    waterCap: 40,
-    storage: 0,
-    needsWater: false,
-    buildTime: 15,
-    joy: false,
+    floodDepth: 0.4,
+    category: 'siedlung',
+    powerGen: 0,
+    powerUse: 0,
+    knowledge: 0,
+    recipe: null,
+    harvest: null,
+    ...p,
+  };
+}
+
+export const BUILDINGS: Record<BuildingId, BuildingDef> = {
+  // --- Siedlung -----------------------------------------------------------------
+  lager: def('lager', {
+    name: 'Lager',
+    desc: 'Nimmt alle Waren auf. Bewohner essen hier.',
+    size: 2,
+    cost: { holz: 12 },
+    storage: 40,
+    buildTime: 20,
     floodDepth: 0.9,
-  },
-  sammler: {
-    ...BASE,
-    category: 'versorgung',
-    id: 'sammler',
-    name: 'Beerensammler',
-    desc: 'Sammelt reife Beeren von Sträuchern im Umkreis.',
-    size: 1,
-    wood: 5,
-    workers: 2,
-    range: 9,
-    housing: 0,
-    waterCap: 0,
-    storage: 0,
-    needsWater: false,
-    buildTime: 10,
-    joy: false,
-    floodDepth: 0.4,
-  },
-  holzfaeller: {
-    ...BASE,
-    category: 'versorgung',
-    id: 'holzfaeller',
-    name: 'Holzfäller',
-    desc: 'Fällt ausgewachsene Bäume im Umkreis.',
-    size: 1,
-    wood: 5,
-    workers: 2,
-    range: 9,
-    housing: 0,
-    waterCap: 0,
-    storage: 0,
-    needsWater: false,
-    buildTime: 10,
-    joy: false,
-    floodDepth: 0.4,
-  },
-  foerster: {
-    ...BASE,
-    category: 'versorgung',
-    id: 'foerster',
-    name: 'Förster',
-    desc: 'Pflanzt Bäume auf feuchtem Boden im Umkreis.',
-    size: 1,
-    wood: 6,
+  }),
+  huette: def('huette', {
+    name: 'Wohnhütte',
+    desc: 'Vier Otter schlafen hier. Ohne Hütte sind sie unglücklich und arbeiten langsamer.',
+    cost: { holz: 8 },
+    housing: 4,
+    buildTime: 15,
+  }),
+  pfahlhaus: def('pfahlhaus', {
+    name: 'Pfahlhaus',
+    desc: 'Wohnhaus auf hohen Pfählen für vier Otter. Das Hochwasser läuft darunter durch.',
+    cost: { holz: 6, bretter: 4 },
+    housing: 4,
+    buildTime: 18,
+    floodDepth: 1.6,
+  }),
+  langhaus: def('langhaus', {
+    name: 'Langhaus',
+    desc: 'Großes Haus aus Brettern, in dem zehn Otter wohnen.',
+    size: 2,
+    cost: { holz: 10, bretter: 8 },
+    housing: 10,
+    buildTime: 26,
+  }),
+  heiler: def('heiler', {
+    name: 'Heilerhütte',
+    desc: 'Pflegt kranke Otter im Umkreis gesund. Mit Kräutern aus dem Lager doppelt so schnell.',
+    cost: { holz: 9 },
     workers: 1,
-    range: 7,
-    housing: 0,
-    waterCap: 0,
-    storage: 0,
-    needsWater: false,
-    buildTime: 10,
-    joy: false,
-    floodDepth: 0.4,
-  },
-  badesteg: {
-    ...BASE,
-    id: 'badesteg',
+    range: 12,
+    buildTime: 14,
+  }),
+  bibliothek: def('bibliothek', {
+    name: 'Bibliothek',
+    desc: 'Ein Gelehrter sammelt hier Wissen, mit dem der Clan neue Techniken erforscht.',
+    cost: { holz: 10 },
+    workers: 1,
+    knowledge: 1,
+    buildTime: 16,
+  }),
+  schule: def('schule', {
+    name: 'Schule',
+    desc: 'Zwei Lehrer unterrichten die Jungen: Sie werden schneller erwachsen, und es entsteht Wissen.',
+    cost: { holz: 8, bretter: 6 },
+    workers: 2,
+    knowledge: 0.7,
+    buildTime: 18,
+  }),
+  sternwarte: def('sternwarte', {
+    name: 'Sternwarte',
+    desc: 'Liest am Himmel ab, wie lange die nächste Jahreszeit genau dauert, und sammelt etwas Wissen.',
+    cost: { holz: 6, bretter: 6 },
+    workers: 1,
+    knowledge: 0.5,
+    buildTime: 18,
+  }),
+  // --- Freude ---------------------------------------------------------------------
+  badesteg: def('badesteg', {
+    category: 'freude',
     name: 'Badesteg',
     desc: 'Ein Steg zum Planschen am Wasser. Otter, die im Umkreis wohnen, sind zufriedener.',
-    size: 1,
-    wood: 4,
-    workers: 0,
+    cost: { holz: 4 },
     range: 10,
-    housing: 0,
-    waterCap: 0,
-    storage: 0,
     needsWater: true,
     buildTime: 8,
     joy: true,
     floodDepth: 2.5,
-  },
-  musikplatz: {
-    ...BASE,
-    id: 'musikplatz',
+  }),
+  musikplatz: def('musikplatz', {
+    category: 'freude',
     name: 'Musikplatz',
     desc: 'Trommeln und Tanz am Abend. Otter, die im Umkreis wohnen, sind zufriedener.',
-    size: 1,
-    wood: 7,
-    workers: 0,
+    cost: { holz: 7 },
     range: 12,
-    housing: 0,
-    waterCap: 0,
-    storage: 0,
-    needsWater: false,
-    buildTime: 12,
     joy: true,
-    floodDepth: 0.4,
-  },
-  heiler: {
-    ...BASE,
-    id: 'heiler',
-    name: 'Heilerhütte',
-    desc: 'Pflegt kranke Otter im Umkreis gesund. Schmutziges Wasser aus der Schlammflut macht krank.',
-    size: 1,
-    wood: 9,
+  }),
+  lagerfeuer: def('lagerfeuer', {
+    category: 'freude',
+    name: 'Lagerfeuer',
+    desc: 'Geschichten am Feuer. Kleiner Wirkungskreis, aber billig.',
+    cost: { holz: 3 },
+    range: 8,
+    buildTime: 6,
+    joy: true,
+  }),
+  beerenschenke: def('beerenschenke', {
+    category: 'freude',
+    name: 'Beerenschenke',
+    desc: 'Der Wirt schenkt Beerensaft aus. Macht zufrieden, solange Beeren im Lager sind und jemand ausschenkt.',
+    cost: { holz: 8, bretter: 4 },
     workers: 1,
     range: 12,
-    housing: 0,
-    waterCap: 0,
-    storage: 0,
-    needsWater: false,
-    buildTime: 14,
-    joy: false,
-    floodDepth: 0.4,
-  },
-  brunnen: {
-    ...BASE,
-    category: 'versorgung',
-    id: 'brunnen',
-    name: 'Brunnen',
-    desc: 'Holt langsam sauberes Grundwasser in den Speicher, auch in der Dürre. Trinkstelle.',
-    size: 1,
-    wood: 10,
-    workers: 0,
-    range: 0,
-    housing: 0,
-    waterCap: 6,
-    storage: 0,
-    needsWater: false,
     buildTime: 16,
-    joy: false,
+    joy: true,
+  }),
+  statue: def('statue', {
+    category: 'freude',
+    name: 'Statue',
+    desc: 'Geschnitzter Otterheld. Alle im Umkreis sind stolz und zufriedener.',
+    cost: { holz: 2, bretter: 6 },
+    range: 10,
+    buildTime: 16,
+    joy: true,
     floodDepth: 0.9,
-  },
-  zisterne: {
-    ...BASE,
+  }),
+  spielplatz: def('spielplatz', {
+    category: 'freude',
+    name: 'Spielplatz',
+    desc: 'Rutsche und Wippe. Familien im Umkreis sind zufriedener.',
+    cost: { holz: 6 },
+    range: 10,
+    buildTime: 12,
+    joy: true,
+  }),
+  aussichtsturm: def('aussichtsturm', {
+    category: 'freude',
+    name: 'Aussichtsturm',
+    desc: 'Hoher Turm mit Blick über das Tal. Großer Wirkungskreis.',
+    cost: { holz: 6, bretter: 6 },
+    range: 16,
+    buildTime: 20,
+    joy: true,
+    floodDepth: 0.9,
+  }),
+  // --- Versorgung --------------------------------------------------------------
+  pumpe: def('pumpe', {
     category: 'versorgung',
-    id: 'zisterne',
+    name: 'Pumpe',
+    desc: 'Pumpt Wasser aus dem Fluss nebenan in den Speicher. Trinkstelle. Steht auf Pfählen und übersteht Hochwasser.',
+    cost: { holz: 6 },
+    workers: 1,
+    waterCap: 8,
+    needsWater: true,
+    floodDepth: 1.6,
+  }),
+  tank: def('tank', {
+    category: 'versorgung',
+    name: 'Wassertank',
+    desc: 'Speichert Wasser für die Dürre. Trinkstelle.',
+    cost: { holz: 10 },
+    waterCap: 40,
+    buildTime: 15,
+    floodDepth: 0.9,
+  }),
+  zisterne: def('zisterne', {
+    category: 'versorgung',
     name: 'Zisterne',
     desc: 'Großer Wasserspeicher aus Holz und Lehm für lange Dürren. Trinkstelle.',
     size: 2,
-    wood: 18,
-    workers: 0,
-    range: 0,
-    housing: 0,
+    cost: { holz: 18 },
     waterCap: 100,
-    storage: 0,
-    needsWater: false,
     buildTime: 24,
-    joy: false,
     floodDepth: 0.9,
-  },
-  wasserrad: {
-    ...BASE,
+  }),
+  brunnen: def('brunnen', {
+    category: 'versorgung',
+    name: 'Brunnen',
+    desc: 'Holt langsam sauberes Grundwasser in den Speicher, auch in der Dürre. Trinkstelle.',
+    cost: { holz: 10 },
+    waterCap: 6,
+    buildTime: 16,
+    floodDepth: 0.9,
+  }),
+  holzfaeller: def('holzfaeller', {
+    category: 'versorgung',
+    name: 'Holzfäller',
+    desc: 'Fällt ausgewachsene Bäume im Umkreis.',
+    cost: { holz: 5 },
+    workers: 2,
+    range: 9,
+    buildTime: 10,
+  }),
+  foerster: def('foerster', {
+    category: 'versorgung',
+    name: 'Förster',
+    desc: 'Pflanzt Bäume auf feuchtem Boden im Umkreis.',
+    cost: { holz: 6 },
+    workers: 1,
+    range: 7,
+    buildTime: 10,
+  }),
+  saegewerk: def('saegewerk', {
+    category: 'versorgung',
+    name: 'Sägewerk',
+    desc: 'Sägt Holz aus dem Lager zu Brettern. Mit Strom läuft die Säge mehr als doppelt so schnell.',
+    cost: { holz: 10 },
+    workers: 1,
+    powerUse: 0.5,
+    recipe: { input: 'holz', inAmount: 2, output: 'bretter', outAmount: 3, time: 10 },
+    buildTime: 16,
+  }),
+  werkstatt: def('werkstatt', {
+    category: 'versorgung',
+    name: 'Werkstatt',
+    desc: 'Fertigt aus Holz Werkzeug. Solange jeder Arbeiter Werkzeug hat, arbeitet der Clan ein Viertel schneller.',
+    cost: { holz: 8, bretter: 4 },
+    workers: 1,
+    recipe: { input: 'holz', inAmount: 1, output: 'werkzeug', outAmount: 1, time: 12 },
+    buildTime: 16,
+  }),
+  kraeutergarten: def('kraeutergarten', {
+    category: 'versorgung',
+    name: 'Kräutergarten',
+    desc: 'Heilkräuter wachsen auf feuchtem Boden. Die Heilerhütte pflegt damit doppelt so schnell.',
+    cost: { holz: 5 },
+    workers: 1,
+    harvest: { days: 2, good: 'kraeuter', amount: 3 },
+    buildTime: 8,
+  }),
+  // --- Nahrung ----------------------------------------------------------------
+  sammler: def('sammler', {
+    category: 'nahrung',
+    name: 'Beerensammler',
+    desc: 'Sammelt reife Beeren von Sträuchern im Umkreis.',
+    cost: { holz: 5 },
+    workers: 2,
+    range: 9,
+    buildTime: 10,
+  }),
+  beerengaertner: def('beerengaertner', {
+    category: 'nahrung',
+    name: 'Beerengärtner',
+    desc: 'Pflanzt Beerensträucher auf feuchtem Boden im Umkreis. Ein Sammler daneben erntet sie.',
+    cost: { holz: 6 },
+    workers: 1,
+    range: 7,
+    buildTime: 10,
+  }),
+  fischer: def('fischer', {
+    category: 'nahrung',
+    name: 'Fischerhütte',
+    desc: 'Fischt im tiefen Wasser nebenan. In der Dürre und im Schlamm gibt es keinen Fisch.',
+    cost: { holz: 7 },
+    workers: 1,
+    range: 8,
+    needsWater: true,
+    buildTime: 12,
+    floodDepth: 1.6,
+  }),
+  fischteich: def('fischteich', {
+    category: 'nahrung',
+    name: 'Fischteich',
+    desc: 'Teich mit Zucht. Wird aus dem Wasserspeicher gespeist und liefert Fisch auch in der Dürre.',
+    size: 2,
+    cost: { holz: 8, bretter: 4 },
+    workers: 1,
+    buildTime: 20,
+    floodDepth: 0.9,
+  }),
+  feld: def('feld', {
+    category: 'nahrung',
+    name: 'Feld',
+    desc: 'Korn reift auf feuchtem Boden in drei Tagen. In der Dürre wächst nichts.',
+    size: 2,
+    cost: { holz: 6 },
+    workers: 1,
+    harvest: { days: 3, good: 'korn', amount: 4 },
+    buildTime: 10,
+  }),
+  baeckerei: def('baeckerei', {
+    category: 'nahrung',
+    name: 'Bäckerei',
+    desc: 'Backt aus Korn Brot. Brot und Fisch machen den Speiseplan abwechslungsreich und den Clan zufriedener.',
+    cost: { holz: 8, bretter: 4 },
+    workers: 1,
+    recipe: { input: 'korn', inAmount: 2, output: 'brot', outAmount: 3, time: 10 },
+    buildTime: 16,
+  }),
+  // --- Strom -------------------------------------------------------------------
+  wasserrad: def('wasserrad', {
     category: 'strom',
-    powerGen: 3,
-    id: 'wasserrad',
     name: 'Wasserrad',
     desc: 'Erzeugt Strom aus der Strömung des Flusses nebenan. Je schneller das Wasser, desto mehr. Steht in der Dürre still.',
-    size: 1,
-    wood: 8,
-    workers: 0,
-    range: 0,
-    housing: 0,
-    waterCap: 0,
-    storage: 0,
+    cost: { holz: 8 },
+    powerGen: 3,
     needsWater: true,
     buildTime: 14,
-    joy: false,
     floodDepth: 1.6,
-  },
-  laufrad: {
-    ...BASE,
+  }),
+  laufrad: def('laufrad', {
     category: 'strom',
-    powerGen: 0.8,
-    id: 'laufrad',
     name: 'Laufrad',
     desc: 'Ein Otter läuft im Rad und erzeugt etwas Strom. Notstrom, wenn der Fluss steht.',
-    size: 1,
-    wood: 6,
+    cost: { holz: 6 },
     workers: 1,
-    range: 0,
-    housing: 0,
-    waterCap: 0,
-    storage: 0,
-    needsWater: false,
+    powerGen: 0.8,
     buildTime: 10,
-    joy: false,
-    floodDepth: 0.4,
-  },
-  pumpwerk: {
-    ...BASE,
+  }),
+  pumpwerk: def('pumpwerk', {
     category: 'strom',
-    powerUse: 1,
-    id: 'pumpwerk',
     name: 'Pumpwerk',
     desc: 'Pumpt mit Strom Wasser aus dem Fluss nebenan in den Speicher, ganz ohne Arbeiter. Trinkstelle.',
-    size: 1,
-    wood: 12,
-    workers: 0,
-    range: 0,
-    housing: 0,
+    cost: { holz: 12 },
+    powerUse: 1,
     waterCap: 10,
-    storage: 0,
     needsWater: true,
     buildTime: 16,
-    joy: false,
     floodDepth: 1.6,
-  },
-  sandfilter: {
-    ...BASE,
+  }),
+  sandfilter: def('sandfilter', {
     category: 'strom',
-    powerUse: 0.6,
-    id: 'sandfilter',
     name: 'Sandfilter',
     desc: 'Reinigt mit Strom das gespeicherte Wasser von Schlamm.',
-    size: 1,
-    wood: 8,
-    workers: 0,
-    range: 0,
-    housing: 0,
-    waterCap: 0,
-    storage: 0,
-    needsWater: false,
-    buildTime: 12,
-    joy: false,
+    cost: { holz: 8 },
+    powerUse: 0.6,
     floodDepth: 0.9,
-  },
+  }),
 };
 
 export const BUILDING_ORDER: BuildingId[] = [
-  'huette', 'lager', 'heiler', 'badesteg', 'musikplatz',
-  'pumpe', 'tank', 'zisterne', 'brunnen', 'sammler', 'holzfaeller', 'foerster',
+  'huette', 'pfahlhaus', 'langhaus', 'lager', 'heiler', 'bibliothek', 'schule', 'sternwarte',
+  'badesteg', 'musikplatz', 'lagerfeuer', 'spielplatz', 'statue', 'beerenschenke', 'aussichtsturm',
+  'pumpe', 'tank', 'zisterne', 'brunnen', 'holzfaeller', 'foerster', 'saegewerk', 'werkstatt', 'kraeutergarten',
+  'sammler', 'beerengaertner', 'fischer', 'fischteich', 'feld', 'baeckerei',
   'wasserrad', 'laufrad', 'pumpwerk', 'sandfilter',
 ];
 
 /** Gebäude mit Wasserspeicher, an denen Otter trinken */
 export const DRINK_SPOTS: BuildingId[] = ['pumpe', 'tank', 'zisterne', 'brunnen', 'pumpwerk'];
 
-export const CATEGORY_LABEL: Record<BuildingCategory, string> = { siedlung: 'Siedlung', versorgung: 'Versorgung', strom: 'Strom' };
+export const CATEGORY_LABEL: Record<BuildingCategory, string> = {
+  siedlung: 'Siedlung',
+  freude: 'Freude',
+  versorgung: 'Versorgung',
+  nahrung: 'Nahrung',
+  strom: 'Strom',
+};
 
 /** Kosten der Wasserbau-Werkzeuge in Holz je Zelle und Höhenstufe */
 export const DAM_WOOD_PER_LEVEL = 1;

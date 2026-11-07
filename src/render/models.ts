@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import type { BuildingId } from '../data/buildings';
+import { BUILDINGS, type BuildingId } from '../data/buildings';
+import { GOOD_CODE } from '../data/goods';
 
 /**
  * Eigene Low-Poly-Modelle aus Grundkörpern mit Vertexfarben. Alle Maße in
@@ -24,6 +25,12 @@ const C = {
   busch: 0x3c7d2f,
   beere: 0xc0392b,
   wasser: 0x3b8fc0,
+  feuer: 0xe8742a,
+  flamme: 0xf5c542,
+  fisch: 0x9bb0b8,
+  brot: 0xb8793a,
+  erde: 0x6b4a2f,
+  rauch: 0xb0b0b0,
 };
 
 function colored(geo: THREE.BufferGeometry, color: number): THREE.BufferGeometry {
@@ -68,6 +75,27 @@ function ball(r: number, color: number, x = 0, y = 0, z = 0, detail = 0): THREE.
   const g = colored(new THREE.IcosahedronGeometry(r, detail), color);
   g.translate(x, y, z);
   return g;
+}
+
+/** Satteldach: dreieckiges Prisma, Breite w (Giebelseite), Höhe h, Länge d */
+function gable(w: number, h: number, d: number, color: number, x = 0, y = 0, z = 0, ry = 0): THREE.BufferGeometry {
+  const shape = new THREE.Shape();
+  shape.moveTo(-w / 2, 0);
+  shape.lineTo(w / 2, 0);
+  shape.lineTo(0, h);
+  shape.closePath();
+  const g = colored(new THREE.ExtrudeGeometry(shape, { depth: d, bevelEnabled: false }), color);
+  g.translate(0, 0, -d / 2);
+  if (ry) g.rotateY(ry);
+  g.translate(x, y, z);
+  return g;
+}
+
+/** Vier Pfosten an den Ecken eines Quadrats */
+function posts(s: number, h: number, color: number, y = 0, t = 0.07): THREE.BufferGeometry[] {
+  const out: THREE.BufferGeometry[] = [];
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) out.push(box(t, h, t, color, (sx * s) / 2, y, (sz * s) / 2));
+  return out;
 }
 
 function merge(parts: THREE.BufferGeometry[]): THREE.BufferGeometry {
@@ -130,15 +158,46 @@ export function berriesGeometry(): THREE.BufferGeometry {
   return merge(parts);
 }
 
-export function logGeometry(): THREE.BufferGeometry {
+function logGeometry(): THREE.BufferGeometry {
   const g = colored(new THREE.CylinderGeometry(0.06, 0.06, 0.34, 6), C.holz);
   g.rotateX(Math.PI / 2);
   g.translate(0, 0.36, 0);
   return merge([g]);
 }
 
-export function basketGeometry(): THREE.BufferGeometry {
-  return merge([cylinder(0.1, 0.12, C.holzHell, 0, 0.3, 0, 6, 0.12), cylinder(0.08, 0.03, C.beere, 0, 0.42, 0, 6)]);
+function basketGeometry(top: number): THREE.BufferGeometry {
+  return merge([cylinder(0.1, 0.12, C.holzHell, 0, 0.3, 0, 6, 0.12), cylinder(0.08, 0.03, top, 0, 0.42, 0, 6)]);
+}
+
+/** Kennziffern der getragenen Waren, für die es ein Modell gibt */
+export const CARRY_CODES: number[] = Object.values(GOOD_CODE);
+
+/** Getragene Ware auf dem Rücken eines Otters, je Kennziffer aus GOOD_CODE */
+export function carryGeometry(code: number): THREE.BufferGeometry {
+  switch (code) {
+    case GOOD_CODE.holz:
+      return logGeometry();
+    case GOOD_CODE.beeren:
+      return basketGeometry(C.beere);
+    case GOOD_CODE.kraeuter:
+      return basketGeometry(C.laub);
+    case GOOD_CODE.bretter:
+      return merge([box(0.16, 0.03, 0.36, C.holzHell, 0, 0.3, 0), box(0.16, 0.03, 0.36, C.holzHell, 0.02, 0.34, 0.02), box(0.16, 0.03, 0.36, C.holzHell, -0.02, 0.38, -0.02)]);
+    case GOOD_CODE.fisch: {
+      const body = colored(new THREE.IcosahedronGeometry(0.09, 0), C.fisch);
+      body.scale(1, 0.7, 2);
+      body.translate(0, 0.36, 0);
+      return merge([body, cone(0.06, 0.1, C.fisch, 0, 0.3, -0.2, 3, Math.PI / 2)]);
+    }
+    case GOOD_CODE.korn:
+      return merge([cylinder(0.1, 0.16, C.stroh, 0, 0.28, 0, 7, 0.07), ball(0.05, C.stroh, 0, 0.46, 0)]);
+    case GOOD_CODE.brot:
+      return merge([ball(0.09, C.brot, 0, 0.36, 0.05, 0), ball(0.09, C.brot, 0, 0.36, -0.08, 0)]);
+    case GOOD_CODE.werkzeug:
+      return merge([box(0.22, 0.1, 0.14, C.holzDunkel, 0, 0.3, 0), box(0.12, 0.03, 0.03, C.eisen, 0, 0.42, 0), box(0.03, 0.06, 0.03, C.eisen, -0.05, 0.4, 0), box(0.03, 0.06, 0.03, C.eisen, 0.05, 0.4, 0)]);
+    default:
+      return logGeometry();
+  }
 }
 
 /** Baugerüst für Baustellen, Größe in Zellen */
@@ -341,10 +400,271 @@ export function buildingGeometry(id: BuildingId): THREE.BufferGeometry {
         box(0.66, 0.04, 0.66, C.holzDunkel, 0, 0.58, 0),
         box(0.08, 0.3, 0.4, C.eisen, 0.36, 0.3, 0.1),
       ]);
+    case 'pfahlhaus': {
+      // Hütte auf hohen Pfählen mit Leiter
+      const h = hut(0.85, C.holzHell, C.laubDunkel);
+      for (const g of h) g.translate(0, 0.55, 0);
+      return merge([
+        ...h,
+        ...posts(0.6, 0.55, C.holzDunkel, 0, 0.08),
+        box(0.8, 0.06, 0.8, C.holz, 0, 0.5, 0),
+        box(0.04, 0.5, 0.04, C.holz, -0.1, 0.02, 0.44),
+        box(0.04, 0.5, 0.04, C.holz, 0.1, 0.02, 0.44),
+        box(0.2, 0.03, 0.03, C.holzHell, 0, 0.14, 0.44),
+        box(0.2, 0.03, 0.03, C.holzHell, 0, 0.28, 0.44),
+        box(0.2, 0.03, 0.03, C.holzHell, 0, 0.42, 0.44),
+      ]);
+    }
+    case 'langhaus':
+      return merge([
+        box(1.7, 0.6, 1.0, C.holzHell, 0, 0, 0),
+        gable(1.15, 0.5, 1.8, C.stroh, 0, 0.6, 0, Math.PI / 2),
+        box(0.2, 0.3, 0.04, C.holzDunkel, -0.45, 0, 0.51),
+        box(0.2, 0.3, 0.04, C.holzDunkel, 0.45, 0, 0.51),
+        box(0.16, 0.14, 0.04, C.wasser, 0, 0.3, 0.51),
+        box(0.16, 0.14, 0.04, C.wasser, -0.3, 0.3, -0.51),
+        box(0.16, 0.14, 0.04, C.wasser, 0.3, 0.3, -0.51),
+      ]);
+    case 'bibliothek':
+      return merge([
+        ...hut(0.9, C.holzHell, C.wasser),
+        // aufgeschlagenes Buch vor der Tür
+        box(0.22, 0.03, 0.16, C.stroh, -0.28, 0.08, 0.36),
+        box(0.22, 0.03, 0.16, C.stroh, -0.06, 0.08, 0.36),
+        box(0.46, 0.08, 0.2, C.holzDunkel, -0.17, 0, 0.36),
+        cylinder(0.04, 0.3, C.stroh, 0.32, 0, 0.36, 6),
+      ]);
+    case 'schule':
+      return merge([
+        box(0.9, 0.55, 0.72, C.holzHell, 0, 0, 0),
+        gable(0.8, 0.4, 0.98, C.beere, 0, 0.55, 0),
+        box(0.16, 0.28, 0.04, C.holzDunkel, 0, 0, 0.37),
+        box(0.14, 0.14, 0.04, C.wasser, -0.3, 0.25, 0.37),
+        box(0.14, 0.14, 0.04, C.wasser, 0.3, 0.25, 0.37),
+        // Glockenturm
+        box(0.16, 0.3, 0.16, C.holzDunkel, 0.25, 0.85, 0),
+        cone(0.14, 0.14, C.beere, 0.25, 1.15, 0, 4, Math.PI / 4),
+        ball(0.05, C.stroh, 0.25, 1.0, 0.09),
+      ]);
+    case 'sternwarte': {
+      const scope = colored(new THREE.CylinderGeometry(0.04, 0.05, 0.4, 6), C.eisen);
+      scope.rotateX(-0.9);
+      scope.translate(0, 1.05, 0.12);
+      return merge([
+        cylinder(0.36, 0.8, C.stein, 0, 0, 0, 10),
+        cylinder(0.38, 0.05, C.steinDunkel, 0, 0.8, 0, 10),
+        ball(0.32, C.wasser, 0, 0.9, 0, 1),
+        scope,
+        box(0.14, 0.24, 0.04, C.holzDunkel, 0, 0, 0.36),
+      ]);
+    }
+    case 'saegewerk': {
+      const blade = colored(new THREE.CylinderGeometry(0.22, 0.22, 0.03, 12), C.eisen);
+      blade.rotateZ(Math.PI / 2);
+      blade.translate(0.05, 0.42, 0);
+      const log = colored(new THREE.CylinderGeometry(0.07, 0.07, 0.8, 6), C.holz);
+      log.rotateZ(Math.PI / 2);
+      log.translate(0.05, 0.36, 0);
+      return merge([
+        box(0.9, 0.06, 0.9, C.holzDunkel, 0, 0, 0),
+        ...posts(0.8, 0.75, C.holzDunkel, 0.06),
+        box(0.96, 0.05, 0.96, C.stroh, 0, 0.8, 0),
+        box(0.8, 0.22, 0.3, C.holz, 0.05, 0.06, 0),
+        blade,
+        log,
+        box(0.16, 0.03, 0.4, C.holzHell, -0.3, 0.06, 0.3),
+        box(0.16, 0.03, 0.4, C.holzHell, -0.3, 0.09, 0.3),
+      ]);
+    }
+    case 'werkstatt':
+      return merge([
+        ...hut(0.9, C.holzDunkel, C.stein),
+        // Amboss und Werkbank
+        box(0.14, 0.1, 0.1, C.eisen, 0.3, 0.1, 0.38),
+        box(0.08, 0.1, 0.08, C.steinDunkel, 0.3, 0, 0.38),
+        box(0.3, 0.04, 0.14, C.holzHell, -0.26, 0.2, 0.4),
+        box(0.03, 0.2, 0.03, C.holzDunkel, -0.36, 0, 0.44),
+        box(0.03, 0.2, 0.03, C.holzDunkel, -0.16, 0, 0.44),
+        box(0.08, 0.04, 0.03, C.eisen, -0.26, 0.24, 0.4),
+      ]);
+    case 'kraeutergarten': {
+      const parts: THREE.BufferGeometry[] = [box(0.84, 0.1, 0.84, C.erde, 0, 0, 0)];
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) parts.push(box(0.05, 0.3, 0.05, C.holzHell, sx * 0.44, 0, sz * 0.44));
+      for (const sx of [-1, 1]) parts.push(box(0.05, 0.04, 0.9, C.holzHell, sx * 0.44, 0.22, 0));
+      for (const sz of [-1, 1]) parts.push(box(0.9, 0.04, 0.05, C.holzHell, 0, 0.22, sz * 0.44));
+      for (let k = 0; k < 9; k++) {
+        const x = ((k % 3) - 1) * 0.26;
+        const z = (Math.floor(k / 3) - 1) * 0.26;
+        parts.push(ball(0.08, k % 2 ? C.laub : C.busch, x, 0.16, z));
+      }
+      return merge(parts);
+    }
+    case 'fischer': {
+      const rod = colored(new THREE.CylinderGeometry(0.015, 0.02, 0.7, 5), C.holzDunkel);
+      rod.rotateZ(-0.7);
+      rod.translate(0.42, 0.55, 0.1);
+      const fish = colored(new THREE.IcosahedronGeometry(0.06, 0), C.fisch);
+      fish.scale(1, 0.7, 1.8);
+      fish.translate(0.62, 0.3, 0.1);
+      return merge([
+        ...posts(0.6, 0.3, C.holzDunkel, 0, 0.07),
+        box(0.84, 0.06, 0.84, C.holz, 0, 0.28, 0),
+        box(0.6, 0.42, 0.6, C.holzHell, -0.08, 0.34, 0),
+        cone(0.5, 0.3, C.laubDunkel, -0.08, 0.76, 0, 4, Math.PI / 4),
+        rod,
+        fish,
+        cylinder(0.1, 0.1, C.holzHell, 0.3, 0.34, -0.3, 6),
+      ]);
+    }
+    case 'fischteich': {
+      const parts: THREE.BufferGeometry[] = [
+        box(1.9, 0.14, 1.9, C.erde, 0, 0, 0),
+        box(1.6, 0.04, 1.6, C.wasser, 0, 0.14, 0),
+        box(0.5, 0.05, 0.2, C.holzHell, -0.5, 0.17, 0.75),
+      ];
+      for (const [x, z] of [
+        [0.7, 0.6],
+        [0.78, 0.4],
+        [-0.72, -0.6],
+        [-0.6, -0.72],
+        [0.6, -0.7],
+      ]) {
+        parts.push(cylinder(0.025, 0.4, C.laubDunkel, x, 0.1, z, 4));
+        parts.push(ball(0.04, C.holzDunkel, x, 0.5, z));
+      }
+      const fish = colored(new THREE.IcosahedronGeometry(0.06, 0), C.fisch);
+      fish.scale(1, 0.5, 1.8);
+      fish.translate(0.2, 0.17, -0.1);
+      parts.push(fish);
+      return merge(parts);
+    }
+    case 'beerengaertner':
+      return merge([
+        ...hut(0.8, C.holz, C.busch),
+        ball(0.14, C.busch, 0.36, 0.12, 0.34),
+        ball(0.04, C.beere, 0.42, 0.22, 0.4),
+        ball(0.04, C.beere, 0.3, 0.2, 0.42),
+        ball(0.12, C.busch, -0.36, 0.1, 0.36),
+        ball(0.04, C.beere, -0.36, 0.2, 0.44),
+        cylinder(0.1, 0.12, C.holzHell, 0.36, 0, -0.36, 6, 0.12),
+      ]);
+    case 'feld': {
+      const parts: THREE.BufferGeometry[] = [box(1.9, 0.08, 1.9, C.erde, 0, 0, 0)];
+      for (let r = 0; r < 4; r++) {
+        const z = (r - 1.5) * 0.42;
+        parts.push(box(1.7, 0.06, 0.18, C.holzDunkel, 0, 0.08, z));
+        for (let k = 0; k < 6; k++) parts.push(cone(0.07, 0.24, C.stroh, (k - 2.5) * 0.3, 0.14, z, 4));
+      }
+      // Vogelscheuche
+      parts.push(box(0.05, 0.7, 0.05, C.holzDunkel, 0.8, 0.08, 0.8));
+      parts.push(box(0.4, 0.05, 0.05, C.holzDunkel, 0.8, 0.55, 0.8));
+      parts.push(ball(0.08, C.stroh, 0.8, 0.82, 0.8));
+      return merge(parts);
+    }
+    case 'baeckerei':
+      return merge([
+        ...hut(0.9, C.stroh, C.holzDunkel),
+        // Kuppelofen mit Schlot neben der Hütte
+        ball(0.2, C.stein, 0.42, 0.12, 0.3, 1),
+        box(0.14, 0.1, 0.04, C.otterNase, 0.42, 0.04, 0.5),
+        cylinder(0.04, 0.3, C.steinDunkel, 0.42, 0.28, 0.3, 6),
+        ball(0.07, C.rauch, 0.42, 0.66, 0.3),
+        ball(0.05, C.rauch, 0.48, 0.78, 0.26),
+      ]);
+    case 'lagerfeuer': {
+      const parts: THREE.BufferGeometry[] = [];
+      for (let k = 0; k < 7; k++) {
+        const a = (k / 7) * Math.PI * 2;
+        parts.push(ball(0.07, C.stein, Math.cos(a) * 0.3, 0.05, Math.sin(a) * 0.3));
+      }
+      for (let k = 0; k < 3; k++) {
+        const l = colored(new THREE.CylinderGeometry(0.04, 0.04, 0.4, 5), C.holzDunkel);
+        l.rotateZ(Math.PI / 2);
+        l.rotateY((k * Math.PI) / 3);
+        l.translate(0, 0.06, 0);
+        parts.push(l);
+      }
+      parts.push(cone(0.14, 0.34, C.feuer, 0, 0.08, 0, 5));
+      parts.push(cone(0.08, 0.22, C.flamme, 0.02, 0.14, 0.02, 5));
+      // Sitzstämme
+      for (const [x, z, ry] of [
+        [0.55, 0.1, 0],
+        [-0.5, 0.25, 0.6],
+        [0.05, -0.55, 1.5],
+      ]) {
+        const seat = colored(new THREE.CylinderGeometry(0.06, 0.06, 0.4, 6), C.holz);
+        seat.rotateZ(Math.PI / 2);
+        seat.rotateY(ry);
+        seat.translate(x, 0.06, z);
+        parts.push(seat);
+      }
+      return merge(parts);
+    }
+    case 'beerenschenke':
+      return merge([
+        ...hut(0.9, C.holz, C.beere),
+        // Tresen und Fass davor, Schild über der Tür
+        box(0.5, 0.26, 0.12, C.holzHell, -0.12, 0, 0.5),
+        cylinder(0.11, 0.24, C.holzDunkel, 0.36, 0, 0.42, 8),
+        cylinder(0.12, 0.03, C.eisen, 0.36, 0.1, 0.42, 8),
+        box(0.3, 0.14, 0.03, C.stroh, 0, 0.5, 0.38),
+        ball(0.04, C.beere, -0.06, 0.57, 0.4),
+        ball(0.04, C.beere, 0.06, 0.57, 0.4),
+      ]);
+    case 'statue':
+      return merge([
+        box(0.6, 0.3, 0.6, C.stein, 0, 0, 0),
+        box(0.5, 0.06, 0.5, C.steinDunkel, 0, 0.3, 0),
+        // stehender Otter aus hellem Holz
+        box(0.24, 0.5, 0.2, C.holzHell, 0, 0.36, 0),
+        box(0.22, 0.2, 0.2, C.holzHell, 0, 0.86, 0.02),
+        box(0.1, 0.06, 0.06, C.holzHell, 0, 0.9, 0.14),
+        box(0.06, 0.06, 0.04, C.holzHell, -0.08, 1.04, 0),
+        box(0.06, 0.06, 0.04, C.holzHell, 0.08, 1.04, 0),
+        box(0.08, 0.3, 0.08, C.holzHell, 0.18, 0.5, 0),
+        box(0.08, 0.3, 0.08, C.holzHell, -0.18, 0.5, 0),
+        box(0.08, 0.08, 0.3, C.holzHell, 0, 0.36, -0.24),
+      ]);
+    case 'spielplatz': {
+      const slide = colored(new THREE.BoxGeometry(0.2, 0.03, 0.6), C.wasser);
+      slide.rotateX(0.6);
+      slide.translate(-0.25, 0.3, 0.1);
+      const seesaw = colored(new THREE.BoxGeometry(0.7, 0.04, 0.12), C.holzHell);
+      seesaw.rotateZ(0.25);
+      seesaw.translate(0.22, 0.2, -0.3);
+      return merge([
+        box(0.9, 0.05, 0.9, C.stroh, 0, 0, 0),
+        slide,
+        box(0.04, 0.5, 0.04, C.holzDunkel, -0.33, 0.05, -0.18),
+        box(0.04, 0.5, 0.04, C.holzDunkel, -0.17, 0.05, -0.18),
+        box(0.2, 0.03, 0.03, C.holzHell, -0.25, 0.2, -0.18),
+        box(0.2, 0.03, 0.03, C.holzHell, -0.25, 0.35, -0.18),
+        box(0.2, 0.04, 0.2, C.wasser, -0.25, 0.5, -0.18),
+        box(0.06, 0.16, 0.06, C.holzDunkel, 0.22, 0.05, -0.3),
+        seesaw,
+        ball(0.09, C.beere, 0.3, 0.14, 0.3),
+      ]);
+    }
+    case 'aussichtsturm':
+      return merge([
+        ...posts(0.6, 1.5, C.holzDunkel, 0, 0.07),
+        box(0.66, 0.04, 0.04, C.holz, 0, 0.5, 0.3),
+        box(0.66, 0.04, 0.04, C.holz, 0, 0.5, -0.3),
+        box(0.04, 0.04, 0.66, C.holz, 0.3, 0.5, 0),
+        box(0.04, 0.04, 0.66, C.holz, -0.3, 0.5, 0),
+        box(0.66, 0.04, 0.04, C.holz, 0, 1.0, 0.3),
+        box(0.66, 0.04, 0.04, C.holz, 0, 1.0, -0.3),
+        box(0.84, 0.06, 0.84, C.holzHell, 0, 1.5, 0),
+        box(0.84, 0.04, 0.04, C.holz, 0, 1.8, 0.4),
+        box(0.84, 0.04, 0.04, C.holz, 0, 1.8, -0.4),
+        box(0.04, 0.04, 0.84, C.holz, 0.4, 1.8, 0),
+        box(0.04, 0.04, 0.84, C.holz, -0.4, 1.8, 0),
+        ...posts(0.8, 0.3, C.holz, 1.56, 0.04),
+        cone(0.62, 0.32, C.laubDunkel, 0, 1.88, 0, 4, Math.PI / 4),
+        box(0.04, 0.4, 0.04, C.holzDunkel, 0, 2.2, 0),
+        box(0.22, 0.12, 0.02, C.beere, 0.12, 2.46, 0),
+      ]);
   }
 }
 
-export const BUILDING_IDS: BuildingId[] = [
-  'lager', 'huette', 'pumpe', 'tank', 'sammler', 'holzfaeller', 'foerster', 'badesteg', 'musikplatz',
-  'heiler', 'brunnen', 'zisterne', 'wasserrad', 'laufrad', 'pumpwerk', 'sandfilter',
-];
+export const BUILDING_IDS: BuildingId[] = Object.keys(BUILDINGS) as BuildingId[];

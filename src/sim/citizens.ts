@@ -1,14 +1,38 @@
-import { BUILDINGS, DRINK_SPOTS } from '../data/buildings';
-import type { Building, Buildings, Good } from './buildings';
+import { BUILDINGS, DRINK_SPOTS, type BuildingId } from '../data/buildings';
+import { type Good } from '../data/goods';
+import type { Building, Buildings } from './buildings';
 import type { Pathfinder } from './pathfinding';
 import { DAY } from './seasons';
 import { TREE_GROWN, type Vegetation } from './vegetation';
 
+export { GOOD_CODE } from '../data/goods';
+
 export type CitizenState = 'idle' | 'walk' | 'work' | 'drink' | 'eat';
 export const STATE_CODE: Record<CitizenState, number> = { idle: 0, walk: 1, work: 2, drink: 3, eat: 4 };
-export const GOOD_CODE: Record<Good, number> = { holz: 1, beeren: 2 };
 
-type TaskKind = 'pump' | 'gather' | 'chop' | 'plant' | 'haul' | 'build' | 'drink' | 'eat' | 'wander' | 'tread' | 'heal';
+type TaskKind =
+  | 'pump'
+  | 'gather'
+  | 'chop'
+  | 'plant'
+  | 'plantbush'
+  | 'haul'
+  | 'build'
+  | 'drink'
+  | 'eat'
+  | 'wander'
+  | 'tread'
+  | 'heal'
+  | 'serve'
+  | 'study'
+  | 'craft'
+  | 'fish'
+  | 'tend'
+  | 'harvest'
+  | 'deliver';
+
+/** Schichtarbeit am Gebäude selbst: Aufgaben, bei denen der Otter eine Weile am Arbeitsplatz bleibt */
+export type ShiftKind = 'tread' | 'heal' | 'serve' | 'study';
 
 interface Task {
   kind: TaskKind;
@@ -22,6 +46,12 @@ interface Task {
   amount: number;
   /** zweites Gebäude (Lager beim Holen) */
   other: number;
+  /** Ware, um die es geht (Lieferung, Verarbeitung) */
+  good: Good | null;
+}
+
+function task(kind: TaskKind, building: number, extra: Partial<Task> = {}): Task {
+  return { kind, building, target: -1, phase: 0, timer: 0, amount: 0, other: -1, good: null, ...extra };
 }
 
 export interface Citizen {
@@ -74,6 +104,7 @@ export interface CitizensSave {
   birthProgress: number;
   now: number;
   dayTimer: number;
+  toolBonus?: boolean;
 }
 
 /** Was die Bewohner von der Welt brauchen */
@@ -89,14 +120,21 @@ export interface Env {
   veg: Vegetation;
   path: Pathfinder;
   walkable(i: number): boolean;
+  /** darf man von Zelle a nach b treten (Höhenunterschied) */
+  canStep(a: number, b: number): boolean;
   store: { stored: number; pollution: number };
   waterCapacity(): number;
   /** Wasser in den Speicher mischen, gibt die aufgenommene Menge zurück */
   addWater(amount: number, pollution: number): number;
   /** Laufräder sollen laufen */
   needsTread(): boolean;
-  /** im Umkreis einer Heilerhütte, in der gerade jemand arbeitet */
-  healAt(x: number, y: number): boolean;
+  /** Heilwirkung an diesem Punkt: 0 keine, 1 Heilerhütte mit Pfleger, 2 mit Kräutern */
+  healAt(x: number, y: number): number;
+  addKnowledge(amount: number): void;
+  /** Geschwindigkeit einer Verarbeitung (Sägewerk braucht Strom) */
+  craftSpeed(b: Building): number;
+  /** Schule mit Lehrern: Junge werden schneller erwachsen */
+  hasSchool(): boolean;
   /** Zahl der Freude-Gebäude verschiedener Art, die diesen Punkt erreichen */
   joyAt(x: number, y: number): number;
   /** Zellen, die gerade jemand als Ziel hat */
@@ -117,6 +155,8 @@ const PUMP_RATE = 0.2;
 const DRINK_AT = 0.35;
 const EAT_AT = 0.35;
 const WATER_DAYS = 3;
+/** So weit laufen durstige Otter zum Fluss (Zellen) */
+const RIVER_RANGE = 24;
 const FOOD_DAYS = 5;
 const CHOP_TIME = 5;
 const PICK_TIME = 3;
@@ -142,8 +182,44 @@ const DIRT_HARM = 0.5;
 /** Erholung je Tag, mit Heiler deutlich schneller */
 const HEALTH_REGEN = 0.08;
 const HEAL_REGEN = 0.6;
-/** Dauer einer Runde im Laufrad oder einer Behandlung in Sekunden */
+/** Dauer einer Runde im Laufrad, einer Behandlung oder Lehrstunde in Sekunden */
 const SHIFT_TIME = 12;
+/** Schicht in der Schenke in Sekunden, verbraucht eine Beere */
+const SERVE_TIME = 20;
+/** Fischen: Dauer je Fang, Fische je Fang, nötige Wassertiefe */
+const FISH_TIME = 6;
+const FISH_PER_CATCH = 2;
+export const FISH_DEPTH = 0.35;
+/** Fischteich: Dauer je Runde, Fische je Runde, Wasser aus dem Speicher je Runde */
+const POND_TIME = 15;
+const POND_FISH = 2;
+const POND_WATER = 1;
+const HARVEST_TIME = 6;
+/** Werkzeugverbrauch je Arbeiter und Tag; mit Werkzeug für alle arbeitet der Clan schneller */
+const TOOLS_PER_WORKER = 0.25;
+export const TOOL_PACE = 1.25;
+/** Ein Junges mit Schule altert so viel schneller */
+const SCHOOL_GROWTH = 0.5;
+/** Reihenfolge bei der Arbeitsvergabe: Wasser und Nahrung vor allem anderen */
+const JOB_PRIORITY: Partial<Record<BuildingId, number>> = {
+  pumpe: 0,
+  sammler: 1,
+  fischer: 1,
+  feld: 1,
+  fischteich: 1,
+  baeckerei: 2,
+  holzfaeller: 2,
+  heiler: 2,
+  saegewerk: 2,
+};
+const DEFAULT_PRIORITY = 3;
+
+function jobPriority(id: BuildingId): number {
+  return JOB_PRIORITY[id] ?? DEFAULT_PRIORITY;
+}
+
+const DX = [-1, 1, 0, 0];
+const DY = [0, 0, -1, 1];
 
 export class Citizens {
   readonly list: Citizen[] = [];
@@ -151,6 +227,8 @@ export class Citizens {
   deaths = 0;
   /** verbleibende Trauerzeit in Sekunden */
   grief = 0;
+  /** Werkzeug für alle Arbeiter da (täglich neu bestimmt) */
+  toolBonus = false;
   /** Zellen, zu denen zuletzt kein Weg gefunden wurde, mit Ablaufzeit */
   private readonly unreachable = new Map<number, number>();
   private now = 0;
@@ -159,6 +237,7 @@ export class Citizens {
   private dayTimer = 0;
   private birthProgress = 0;
   private noWaterWarned = false;
+  private waterWarnAt = -Infinity;
   private noFoodWarned = false;
 
   private readonly env: Env;
@@ -235,11 +314,19 @@ export class Citizens {
   }
 
   /** Arbeitet gerade jemand mit dieser Aufgabe an dem Gebäude? */
-  workingAt(buildingId: number, kind: 'tread' | 'heal'): boolean {
+  workingAt(buildingId: number, kind: ShiftKind): boolean {
+    return this.shiftAt(buildingId, kind) > 0;
+  }
+
+  /** Stärke der laufenden Schicht: 0 niemand, 1 Arbeit, 2 Behandlung mit Kräutern */
+  shiftAt(buildingId: number, kind: ShiftKind): number {
+    let best = 0;
     for (const c of this.list) {
-      if (c.alive && c.state === 'work' && c.task && c.task.kind === kind && c.task.building === buildingId) return true;
+      if (!c.alive || c.state !== 'work' || !c.task || c.task.kind !== kind || c.task.building !== buildingId) continue;
+      const v = kind === 'heal' && c.task.amount > 0 ? 2 : 1;
+      if (v > best) best = v;
     }
-    return false;
+    return best;
   }
 
   cell(c: Citizen): number {
@@ -290,8 +377,10 @@ export class Citizens {
 
   private updateMood(dt: number): void {
     const env = this.env;
+    // Abwechslung auf dem Speiseplan macht zufrieden
+    const variety = 0.05 * Math.max(0, env.buildings.foodKinds() - 1);
     for (const c of this.alive()) {
-      let t = 0.55;
+      let t = 0.55 + variety;
       const home = env.buildings.get(c.home);
       if (home) {
         t += 0.15;
@@ -302,14 +391,15 @@ export class Citizens {
       if (c.water < DRINK_AT || c.food < EAT_AT) t -= 0.2;
       else if (c.water > 0.6 && c.food > 0.6) t += 0.1;
       const at = home ? env.buildings.center(home) : c;
-      t += 0.1 * Math.min(2, env.joyAt(at.x, at.y));
+      t += 0.08 * Math.min(3, env.joyAt(at.x, at.y));
       if (this.grief > 0) t -= 0.15;
       if (c.sick) t -= 0.2;
       t = Math.max(0, Math.min(1, t));
       c.mood += (t - c.mood) * Math.min(1, dt / MOOD_TIME);
       // Gesundheit erholt sich langsam, mit Heiler schnell
       if (c.health < 1) {
-        const regen = (env.healAt(c.x, c.y) ? HEAL_REGEN : HEALTH_REGEN) * (dt / DAY);
+        const heal = env.healAt(c.x, c.y);
+        const regen = (heal > 0 ? HEAL_REGEN * heal : HEALTH_REGEN) * (dt / DAY);
         c.health = Math.min(1, c.health + regen);
       }
       if (!c.sick && c.health < SICK_AT) {
@@ -329,13 +419,20 @@ export class Citizens {
   }
 
   private daily(): void {
+    const school = this.env.hasSchool();
+    let workers = 0;
     for (const c of this.list) {
       if (!c.alive) continue;
-      c.age += 1;
+      c.age += c.child && school ? 1 + SCHOOL_GROWTH : 1;
       c.lifespan += (c.mood - 0.5) * 0.3;
       if (c.child && c.age >= CHILD_DAYS) c.child = false;
       if (c.age >= c.lifespan) this.die(c, 'in hohem Alter gestorben');
+      else if (!c.child && c.workplace >= 0) workers++;
     }
+    // Werkzeug nutzt sich ab; reicht es für alle, arbeitet der Clan schneller
+    const need = workers * TOOLS_PER_WORKER;
+    const got = need > 0 ? this.env.buildings.takeGood('werkzeug', need, 0, 0) : 0;
+    this.toolBonus = need > 0 && got >= need - 1e-6;
     this.tryBirth();
   }
 
@@ -344,7 +441,7 @@ export class Citizens {
     const b = env.buildings;
     const housing = b.housing();
     if (this.count() >= housing) return;
-    if (b.total('beeren') < 2) return;
+    if (b.foodTotal() < 2) return;
     let adults = 0;
     let moodSum = 0;
     for (const c of this.alive()) {
@@ -367,8 +464,10 @@ export class Citizens {
     const huts = [...b.alive()].filter((h) => h.built && BUILDINGS[h.def].housing > h.residents.length);
     if (huts.length === 0) return false;
     const hut = huts[Math.floor(env.rnd() * huts.length)];
-    const ring = b.ring(hut).filter((i) => env.walkable(i));
-    const cell = ring.length ? ring[Math.floor(env.rnd() * ring.length)] : hut.y * env.w + hut.x;
+    // vor der Hütte, auf einer Zelle, von der man auch wegkommt
+    const ring = b.ring(hut).filter((i) => this.canLeave(i));
+    const cell = ring.length ? ring[Math.floor(env.rnd() * ring.length)] : this.freeCellNear(b.cells(hut));
+    if (cell < 0) return false;
     const c = this.spawn(cell % env.w, (cell / env.w) | 0, { child: true });
     c.home = hut.id;
     hut.residents.push(c.id);
@@ -399,26 +498,94 @@ export class Citizens {
     }
   }
 
+  /**
+   * Bewohner, die auf diesen Zellen stehen und dort nicht mehr wegkommen
+   * (neues Gebäude, Damm), auf die nächste freie Zelle daneben setzen.
+   */
+  evict(cells: number[]): void {
+    const env = this.env;
+    const inside = new Set(cells);
+    for (const c of this.list) {
+      if (!c.alive || !inside.has(this.cell(c)) || this.canLeave(this.cell(c))) continue;
+      const spot = this.freeCellNear(cells);
+      if (spot < 0) continue;
+      this.fail(c);
+      c.cooldown = 0.5;
+      c.x = (spot % env.w) + 0.5;
+      c.y = Math.floor(spot / env.w) + 0.5;
+    }
+  }
+
+  /** Kann man von dieser Zelle auf eine begehbare Nachbarzelle treten? */
+  private canLeave(i: number): boolean {
+    const env = this.env;
+    if (!env.walkable(i)) return false;
+    const x = i % env.w;
+    const y = (i / env.w) | 0;
+    for (let k = 0; k < 4; k++) {
+      const nx = x + DX[k];
+      const ny = y + DY[k];
+      if (nx < 0 || ny < 0 || nx >= env.w || ny >= env.h) continue;
+      const n = ny * env.w + nx;
+      if (env.walkable(n) && env.canStep(i, n)) return true;
+    }
+    return false;
+  }
+
+  /** Nächste freie Zelle um die gegebenen Zellen, trockene bevorzugt (-1 wenn keine) */
+  private freeCellNear(cells: number[]): number {
+    const env = this.env;
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const i of cells) {
+      const x = i % env.w;
+      const y = (i / env.w) | 0;
+      x0 = Math.min(x0, x);
+      y0 = Math.min(y0, y);
+      x1 = Math.max(x1, x);
+      y1 = Math.max(y1, y);
+    }
+    for (let r = 1; r <= 8; r++) {
+      let wet = -1;
+      for (let y = y0 - r; y <= y1 + r; y++) {
+        for (let x = x0 - r; x <= x1 + r; x++) {
+          if (x < 0 || y < 0 || x >= env.w || y >= env.h) continue;
+          if (x > x0 - r && x < x1 + r && y > y0 - r && y < y1 + r) continue;
+          const i = y * env.w + x;
+          if (!this.canLeave(i)) continue;
+          if (env.depth[i] <= 0.25) return i;
+          if (wet < 0) wet = i;
+        }
+      }
+      if (wet >= 0) return wet;
+    }
+    return -1;
+  }
+
   /** Reservierungen einer Aufgabe freigeben */
   private release(c: Citizen): void {
     const t = c.task;
     if (!t) return;
     if (t.target >= 0) this.env.reserved.delete(t.target);
-    if (t.kind === 'haul') {
+    if (t.kind === 'haul' && t.good) {
       const site = this.env.buildings.get(t.building);
-      if (site && t.phase < 2) site.woodReserved = Math.max(0, site.woodReserved - t.amount);
+      if (site && t.phase < 2) site.reserved[t.good] = Math.max(0, site.reserved[t.good] - t.amount);
     }
     c.task = null;
     c.path = null;
   }
 
+  /** Freie Erwachsene an Arbeitsplätze verteilen, Wasser und Nahrung zuerst */
   private assignWork(): void {
     const env = this.env;
     const free: Citizen[] = [];
     for (const c of this.alive()) if (c.workplace < 0 && !c.child) free.push(c);
-    if (free.length === 0) return;
-    for (const b of env.buildings.alive()) {
-      if (!b.built) continue;
+    const jobs = [...env.buildings.alive()].filter((b) => b.built && BUILDINGS[b.def].workers > 0);
+    jobs.sort((a, z) => jobPriority(a.def) - jobPriority(z.def) || a.id - z.id);
+    for (const b of jobs) {
+      if (free.length === 0) break;
       const def = BUILDINGS[b.def];
       while (b.workers.length < def.workers && free.length > 0) {
         const ctr = env.buildings.center(b);
@@ -427,6 +594,20 @@ export class Citizens {
         c.workplace = b.id;
         b.workers.push(c.id);
       }
+    }
+    // Niemand frei, aber ein wichtiges Gebäude steht leer: einen Arbeiter aus
+    // einem unwichtigeren holen (höchstens einen je Sekunde)
+    if (free.length > 0) return;
+    for (const b of jobs) {
+      if (b.workers.length > 0) continue;
+      const prio = jobPriority(b.def);
+      const donor = jobs.find((o) => o.workers.length > 0 && jobPriority(o.def) > prio);
+      if (!donor) continue;
+      const id = donor.workers.pop()!;
+      const c = this.list[id];
+      c.workplace = b.id;
+      b.workers.push(id);
+      return;
     }
   }
 
@@ -455,26 +636,26 @@ export class Citizens {
     if (c.water < DRINK_AT) {
       if (env.store.stored >= 1) {
         const src = b.nearest(DRINK_SPOTS, c.x, c.y);
-        if (src && this.startTask(c, { kind: 'drink', building: src.id, target: -1, phase: 0, timer: 0, amount: 1, other: -1 }, b.ring(src))) return;
+        if (src && this.startTask(c, task('drink', src.id, { amount: 1 }), b.ring(src))) return;
       }
-      // Otter trinken auch direkt aus dem Fluss, solange er Wasser führt
-      const river = this.findInRange({ x: c.x, y: c.y }, 14, (i) => env.depth[i] > 0.1 && env.buildings.occ[i] < 0);
-      if (river >= 0 && this.startTask(c, { kind: 'drink', building: -1, target: -1, phase: 0, timer: 0, amount: 0, other: river }, [river])) return;
-      if (!this.noWaterWarned) {
+      // Otter trinken auch direkt aus dem Fluss, solange er Wasser führt: vom Ufer aus
+      if (this.goToShore(c, task('drink', -1), { x: c.x, y: c.y }, RIVER_RANGE, (i) => env.depth[i] > 0.1 && env.buildings.occ[i] < 0, false)) return;
+      if (!this.noWaterWarned && this.now - this.waterWarnAt > DAY / 2) {
         this.noWaterWarned = true;
+        this.waterWarnAt = this.now;
         env.log('Kein Trinkwasser: Speicher leer und kein Fluss in der Nähe.');
       }
     } else if (env.store.stored >= 1) {
       this.noWaterWarned = false;
     }
     if (c.food < EAT_AT) {
-      const l = b.storageWith('beeren', 1, c.x, c.y);
-      if (l && this.startTask(c, { kind: 'eat', building: l.id, target: -1, phase: 0, timer: 0, amount: 1, other: -1 }, b.ring(l))) return;
+      const l = b.storageWithFood(c.x, c.y);
+      if (l && this.startTask(c, task('eat', l.id, { amount: 1 }), b.ring(l))) return;
       if (!l && !this.noFoodWarned) {
         this.noFoodWarned = true;
-        env.log('Die Beeren sind aufgebraucht.');
+        env.log('Die Nahrung ist aufgebraucht. Sammler, Fischer und Felder schaffen Nachschub.');
       }
-    } else if (b.total('beeren') > 0) {
+    } else if (b.foodTotal() > 0) {
       this.noFoodWarned = false;
     }
     // Noch Ware in der Hand (z. B. nach gescheiterter Lieferung): abliefern
@@ -507,6 +688,25 @@ export class Citizens {
     const b = env.buildings;
     const def = BUILDINGS[wp.def];
     const ctr = b.center(wp);
+    // Verarbeitung: Zutat im Lager holen, am Arbeitsplatz verarbeiten, Erzeugnis zurückbringen
+    if (def.recipe) {
+      const r = def.recipe;
+      const lager = b.storageWith(r.input, r.inAmount, c.x, c.y);
+      if (!lager || !b.storageSpace(r.output, r.outAmount, ctr.x, ctr.y)) {
+        c.cooldown = 5;
+        return true;
+      }
+      return this.startTask(c, task('craft', wp.id, { other: lager.id, good: r.input, amount: r.inAmount }), b.ring(lager));
+    }
+    // Ernte: Feld oder Kräutergarten, wenn reif
+    if (def.harvest) {
+      if (wp.growth < 1) {
+        c.cooldown = 6;
+        return true;
+      }
+      return this.startTask(c, task('harvest', wp.id), b.ring(wp));
+    }
+    if (def.knowledge > 0) return this.startTask(c, task('study', wp.id), b.ring(wp));
     switch (wp.def) {
       case 'pumpe': {
         if (env.store.stored >= env.waterCapacity() - 0.01) {
@@ -518,7 +718,7 @@ export class Citizens {
           c.cooldown = 4;
           return true;
         }
-        return this.startTask(c, { kind: 'pump', building: wp.id, target: -1, phase: 0, timer: 0, amount: 0, other: -1 }, b.ring(wp));
+        return this.startTask(c, task('pump', wp.id), b.ring(wp));
       }
       case 'sammler': {
         const t = this.findInRange(ctr, def.range, (i) => env.veg.bushes[i] === 2);
@@ -526,7 +726,7 @@ export class Citizens {
           c.cooldown = 5;
           return true;
         }
-        return this.startTask(c, { kind: 'gather', building: wp.id, target: t, phase: 0, timer: 0, amount: 0, other: -1 }, [t]);
+        return this.startTask(c, task('gather', wp.id, { target: t }), [t]);
       }
       case 'holzfaeller': {
         const t = this.findInRange(ctr, def.range, (i) => env.veg.trees[i] >= TREE_GROWN);
@@ -534,14 +734,26 @@ export class Citizens {
           c.cooldown = 5;
           return true;
         }
-        return this.startTask(c, { kind: 'chop', building: wp.id, target: t, phase: 0, timer: 0, amount: 0, other: -1 }, [t]);
+        return this.startTask(c, task('chop', wp.id, { target: t }), [t]);
+      }
+      case 'fischer': {
+        if (this.goToShore(c, task('fish', wp.id), ctr, def.range, (i) => env.depth[i] >= FISH_DEPTH && env.pollution[i] < 0.3 && env.buildings.occ[i] < 0 && env.struct[i] === 0, true)) return true;
+        c.cooldown = 6;
+        return true;
+      }
+      case 'fischteich': {
+        if (env.store.stored < POND_WATER || !b.storageSpace('fisch', POND_FISH, ctr.x, ctr.y)) {
+          c.cooldown = 6;
+          return true;
+        }
+        return this.startTask(c, task('tend', wp.id), b.ring(wp));
       }
       case 'laufrad': {
         if (!env.needsTread()) {
           c.cooldown = 4;
           return true;
         }
-        return this.startTask(c, { kind: 'tread', building: wp.id, target: -1, phase: 0, timer: 0, amount: 0, other: -1 }, b.ring(wp));
+        return this.startTask(c, task('tread', wp.id), b.ring(wp));
       }
       case 'heiler': {
         let sickNear = false;
@@ -555,17 +767,28 @@ export class Citizens {
           c.cooldown = 6;
           return true;
         }
-        return this.startTask(c, { kind: 'heal', building: wp.id, target: -1, phase: 0, timer: 0, amount: 0, other: -1 }, b.ring(wp));
+        // Kräuter aus dem Lager verdoppeln die Wirkung einer Behandlung
+        const herbs = b.takeGood('kraeuter', 1, ctr.x, ctr.y);
+        return this.startTask(c, task('heal', wp.id, { amount: herbs }), b.ring(wp));
       }
-      case 'foerster': {
+      case 'beerenschenke': {
+        if (b.takeGood('beeren', 1, ctr.x, ctr.y) < 1) {
+          c.cooldown = 6;
+          return true;
+        }
+        return this.startTask(c, task('serve', wp.id), b.ring(wp));
+      }
+      case 'foerster':
+      case 'beerengaertner': {
+        const bush = wp.def === 'beerengaertner';
         const t = this.findInRange(ctr, def.range, (i) =>
           env.veg.trees[i] === 0 && env.veg.bushes[i] === 0 && env.buildings.occ[i] < 0 && env.struct[i] === 0 &&
-          env.depth[i] < 0.1 && env.veg.moist[i] > 0 && env.ground[i] >= 2 && env.ground[i] <= 11 && this.hasNeighborSpace(i));
+          env.depth[i] < 0.1 && env.veg.moist[i] > 0 && env.ground[i] >= 2 && env.ground[i] <= 11 && (bush || this.hasNeighborSpace(i)));
         if (t < 0) {
           c.cooldown = 6;
           return true;
         }
-        return this.startTask(c, { kind: 'plant', building: wp.id, target: t, phase: 0, timer: 0, amount: 0, other: -1 }, [t]);
+        return this.startTask(c, task(bush ? 'plantbush' : 'plant', wp.id, { target: t }), [t]);
       }
       default:
         return false;
@@ -610,6 +833,61 @@ export class Citizens {
     return best;
   }
 
+  /**
+   * Uferzellen im Umkreis, die begehbar sind und eine Wasserzelle als Nachbarn
+   * haben, auf die `wet` zutrifft, die nächsten zuerst (höchstens `max`).
+   * So kommen Otter auch an steile Ufer heran.
+   */
+  private findShores(ctr: { x: number; y: number }, range: number, wet: (i: number) => boolean, max: number): number[] {
+    const env = this.env;
+    const x0 = Math.max(0, Math.floor(ctr.x - range));
+    const x1 = Math.min(env.w - 1, Math.floor(ctr.x + range));
+    const y0 = Math.max(0, Math.floor(ctr.y - range));
+    const y1 = Math.min(env.h - 1, Math.floor(ctr.y + range));
+    const found: { i: number; d: number }[] = [];
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const d = Math.hypot(x + 0.5 - ctr.x, y + 0.5 - ctr.y);
+        if (d > range) continue;
+        const i = y * env.w + x;
+        if (!env.walkable(i) || env.depth[i] > 0.25 || env.reserved.has(i) || this.isUnreachable(i)) continue;
+        if (this.wetNeighbour(i, wet) >= 0) found.push({ i, d });
+      }
+    }
+    found.sort((a, z) => a.d - z.d);
+    return found.slice(0, max).map((f) => f.i);
+  }
+
+  /** Wasserzelle neben einer Zelle, auf die `wet` zutrifft (-1 wenn keine) */
+  private wetNeighbour(i: number, wet: (i: number) => boolean): number {
+    const env = this.env;
+    const x = i % env.w;
+    const y = (i / env.w) | 0;
+    for (let k = 0; k < 4; k++) {
+      const nx = x + DX[k];
+      const ny = y + DY[k];
+      if (nx < 0 || ny < 0 || nx >= env.w || ny >= env.h) continue;
+      const j = ny * env.w + nx;
+      if (wet(j)) return j;
+    }
+    return -1;
+  }
+
+  /**
+   * Weg ans Ufer beginnen: Der Wegsucher nimmt die nächste erreichbare
+   * Uferzelle; die Wasserzelle daneben landet in `other`, die Standzelle
+   * in `target` (und wird bei `reserve` für andere gesperrt).
+   */
+  private goToShore(c: Citizen, t: Task, ctr: { x: number; y: number }, range: number, wet: (i: number) => boolean, reserve: boolean): boolean {
+    const stands = this.findShores(ctr, range, wet, 24);
+    if (stands.length === 0 || !this.startTask(c, t, stands)) return false;
+    const stand = c.path && c.path.length > 0 ? c.path[c.path.length - 1] : this.cell(c);
+    t.target = stand;
+    t.other = this.wetNeighbour(stand, wet);
+    if (reserve) this.env.reserved.add(stand);
+    return true;
+  }
+
   private isUnreachable(i: number): boolean {
     const until = this.unreachable.get(i);
     if (until === undefined) return false;
@@ -636,34 +914,35 @@ export class Citizens {
     const sites: { s: Building; key: number }[] = [];
     for (const s of b.alive()) {
       if (haulers >= MAX_HAULERS) break;
-      if (s.built || b.woodNeeded(s) <= 0) continue;
+      if (s.built || b.missing(s).length === 0) continue;
       // eingebaute oder gerade unerreichbare Baustellen überspringen
       if (this.isUnreachable(s.y * env.w + s.x) || !b.ring(s).some((i) => env.walkable(i))) continue;
-      const started = s.woodDelivered + s.woodReserved > 0 ? 0 : 1;
+      const started = b.deliveredShare(s) > 0 || b.missing(s).length < Object.keys(BUILDINGS[s.def].cost).length ? 0 : 1;
       const key = (s.def === 'holzfaeller' ? 0 : 1) * 1e6 + started * 1e5 + s.id;
       sites.push({ s, key });
     }
     sites.sort((a, b2) => a.key - b2.key);
     for (const { s: site } of sites) {
-      const need = b.woodNeeded(site);
-      const lager = b.storageWith('holz', 1, c.x, c.y);
-      if (!lager) break;
-      const amount = Math.min(need, HAUL_MAX, lager.stock.holz);
-      const task: Task = { kind: 'haul', building: site.id, target: -1, phase: 0, timer: 0, amount, other: lager.id };
-      if (this.startTask(c, task, b.ring(lager))) {
-        site.woodReserved += amount;
-        return true;
+      for (const good of b.missing(site)) {
+        const need = b.needed(site, good);
+        const lager = b.storageWith(good, 1, c.x, c.y);
+        if (!lager) continue;
+        const amount = Math.min(need, HAUL_MAX, lager.stock[good]);
+        if (this.startTask(c, task('haul', site.id, { amount, other: lager.id, good }), b.ring(lager))) {
+          site.reserved[good] += amount;
+          return true;
+        }
       }
     }
     // Bauen
     if (builders >= MAX_BUILDERS_TOTAL) return false;
     for (const s of b.alive()) {
-      if (s.built || s.woodDelivered < BUILDINGS[s.def].wood) continue;
+      if (s.built || !b.fullyDelivered(s)) continue;
       if (this.isUnreachable(s.y * env.w + s.x)) continue;
       let here = 0;
       for (const o of this.alive()) if (o.task && o.task.kind === 'build' && o.task.building === s.id) here++;
       if (here >= MAX_BUILDERS) continue;
-      if (this.startTask(c, { kind: 'build', building: s.id, target: -1, phase: 0, timer: 0, amount: 0, other: -1 }, b.ring(s))) return true;
+      if (this.startTask(c, task('build', s.id), b.ring(s))) return true;
       this.unreachable.set(s.y * env.w + s.x, this.now + 60);
     }
     return false;
@@ -682,7 +961,7 @@ export class Citizens {
     if (tx < 0 || ty < 0 || tx >= env.w || ty >= env.h) return;
     const t = ty * env.w + tx;
     if (!env.walkable(t)) return;
-    this.startTask(c, { kind: 'wander', building: -1, target: -1, phase: 0, timer: 0, amount: 0, other: -1 }, [t]);
+    this.startTask(c, task('wander', -1), [t]);
   }
 
   /** Aufgabe mit Weg zu einem der Ziele beginnen */
@@ -792,6 +1071,7 @@ export class Citizens {
         t.timer = t.phase === 0 ? CHOP_TIME : 0.5;
         break;
       case 'plant':
+      case 'plantbush':
         c.state = 'work';
         t.timer = PLANT_TIME;
         break;
@@ -799,13 +1079,42 @@ export class Citizens {
         c.state = 'work';
         t.timer = 0.8;
         break;
+      case 'deliver':
+        c.state = 'work';
+        t.timer = 0.5;
+        break;
       case 'build':
         c.state = 'work';
         break;
       case 'tread':
       case 'heal':
+      case 'study':
         c.state = 'work';
         t.timer = SHIFT_TIME;
+        break;
+      case 'serve':
+        c.state = 'work';
+        t.timer = SERVE_TIME;
+        break;
+      case 'craft': {
+        c.state = 'work';
+        // am Lager kurz, am Arbeitsplatz die Arbeitszeit des Rezepts
+        const wp = this.env.buildings.get(t.building);
+        const r = wp ? BUILDINGS[wp.def].recipe : null;
+        t.timer = t.phase === 0 || !r || !wp ? 0.8 : r.time / this.env.craftSpeed(wp);
+        break;
+      }
+      case 'fish':
+        c.state = 'work';
+        t.timer = FISH_TIME;
+        break;
+      case 'tend':
+        c.state = 'work';
+        t.timer = POND_TIME;
+        break;
+      case 'harvest':
+        c.state = 'work';
+        t.timer = HARVEST_TIME;
         break;
     }
   }
@@ -820,8 +1129,8 @@ export class Citizens {
       c.state = 'idle';
       return;
     }
-    // Zufriedene Otter arbeiten schneller, kranke langsam
-    const pace = (0.7 + 0.5 * c.mood) * (c.sick ? 0.5 : 1);
+    // Zufriedene Otter arbeiten schneller, kranke langsam, mit Werkzeug alle flotter
+    const pace = (0.7 + 0.5 * c.mood) * (c.sick ? 0.5 : 1) * (this.toolBonus ? TOOL_PACE : 1);
     t.timer -= dt * pace;
     switch (t.kind) {
       case 'drink': {
@@ -845,8 +1154,9 @@ export class Citizens {
       case 'eat': {
         if (t.timer > 0) return;
         const l = b.get(t.building);
-        if (l && l.stock.beeren >= 1) {
-          l.stock.beeren -= 1;
+        const food = l ? b.bestFood(l) : null;
+        if (l && food) {
+          l.stock[food] -= 1;
           c.food = 1;
         }
         this.finish(c, 0.5);
@@ -880,12 +1190,101 @@ export class Citizens {
         return;
       }
       case 'tread':
-      case 'heal': {
+      case 'heal':
+      case 'serve':
+      case 'study': {
         if (c.water < DRINK_AT || c.food < EAT_AT) {
           this.finish(c, 0);
           return;
         }
         if (t.timer > 0) return;
+        if (t.kind === 'study') {
+          const wp = b.get(t.building);
+          if (wp) env.addKnowledge(BUILDINGS[wp.def].knowledge);
+        }
+        this.finish(c, 0.5);
+        return;
+      }
+      case 'fish': {
+        if (t.timer > 0) return;
+        env.reserved.delete(t.target);
+        const ok = env.depth[t.other] >= FISH_DEPTH * 0.5;
+        t.target = -1;
+        if (!ok) {
+          this.fail(c);
+          return;
+        }
+        c.carry = 'fisch';
+        c.carryAmount = FISH_PER_CATCH;
+        if (!this.deliverCarried(c)) this.finish(c, 3);
+        return;
+      }
+      case 'tend': {
+        if (t.timer > 0) return;
+        if (env.store.stored < POND_WATER) {
+          this.finish(c, 3);
+          return;
+        }
+        env.store.stored -= POND_WATER;
+        c.carry = 'fisch';
+        c.carryAmount = POND_FISH;
+        if (!this.deliverCarried(c)) this.finish(c, 3);
+        return;
+      }
+      case 'harvest': {
+        if (t.timer > 0) return;
+        const wp = b.get(t.building);
+        const h = wp ? BUILDINGS[wp.def].harvest : null;
+        if (!wp || !h || wp.growth < 1) {
+          this.finish(c, 2);
+          return;
+        }
+        wp.growth = 0;
+        b.version++;
+        c.carry = h.good;
+        c.carryAmount = h.amount;
+        if (!this.deliverCarried(c)) this.finish(c, 3);
+        return;
+      }
+      case 'craft': {
+        if (t.timer > 0) return;
+        const wp = b.get(t.building);
+        const r = wp && wp.built ? BUILDINGS[wp.def].recipe : null;
+        if (!wp || !r || !t.good) {
+          this.fail(c);
+          return;
+        }
+        if (t.phase === 0) {
+          // am Lager: Zutat nehmen und zum Arbeitsplatz gehen
+          const lager = b.get(t.other);
+          if (!lager || lager.stock[t.good] < t.amount) {
+            this.fail(c);
+            return;
+          }
+          lager.stock[t.good] -= t.amount;
+          c.carry = t.good;
+          c.carryAmount = t.amount;
+          t.phase = 1;
+          const p = env.path.find(this.cell(c), b.ring(wp).filter((i) => env.walkable(i)));
+          if (!p) {
+            this.deliverCarried(c) || this.finish(c, 3);
+            return;
+          }
+          c.path = p;
+          c.pathIdx = 0;
+          c.state = p.length === 0 ? 'work' : 'walk';
+          if (p.length === 0) this.arrive(c);
+          return;
+        }
+        // am Arbeitsplatz fertig: Erzeugnis ins Lager bringen
+        c.carry = r.output;
+        c.carryAmount = r.outAmount;
+        if (!this.deliverCarried(c)) this.finish(c, 3);
+        return;
+      }
+      case 'deliver': {
+        if (t.timer > 0) return;
+        this.dropCarried(c, t.building);
         this.finish(c, 0.5);
         return;
       }
@@ -910,9 +1309,11 @@ export class Citizens {
         this.finish(c, 0.5);
         return;
       }
-      case 'plant': {
+      case 'plant':
+      case 'plantbush': {
         if (t.timer > 0) return;
-        env.veg.plantTree(t.target);
+        if (t.kind === 'plant') env.veg.plantTree(t.target);
+        else env.veg.plantBush(t.target);
         env.reserved.delete(t.target);
         t.target = -1;
         this.finish(c, 1);
@@ -921,26 +1322,27 @@ export class Citizens {
       case 'haul': {
         if (t.timer > 0) return;
         const site = b.get(t.building);
+        const good = t.good!;
         if (t.phase === 0) {
-          // am Lager: Holz nehmen
+          // am Lager: Baustoff nehmen
           const lager = b.get(t.other);
-          const got = lager ? Math.min(t.amount, lager.stock.holz) : 0;
+          const got = lager ? Math.min(t.amount, lager.stock[good]) : 0;
           if (!site || site.built || got <= 0) {
-            if (site) site.woodReserved = Math.max(0, site.woodReserved - t.amount);
+            if (site) site.reserved[good] = Math.max(0, site.reserved[good] - t.amount);
             this.fail(c);
             return;
           }
-          lager!.stock.holz -= got;
-          site.woodReserved = Math.max(0, site.woodReserved - (t.amount - got));
+          lager!.stock[good] -= got;
+          site.reserved[good] = Math.max(0, site.reserved[good] - (t.amount - got));
           t.amount = got;
-          c.carry = 'holz';
+          c.carry = good;
           c.carryAmount = got;
           t.phase = 1;
           c.task = t;
           const p = env.path.find(this.cell(c), b.ring(site).filter((i) => env.walkable(i)));
           if (!p) {
-            site.woodReserved = Math.max(0, site.woodReserved - got);
-            // Baustelle eine Weile meiden und das Holz zurücklegen
+            site.reserved[good] = Math.max(0, site.reserved[good] - got);
+            // Baustelle eine Weile meiden und die Ware zurücklegen
             this.unreachable.set(site.y * env.w + site.x, this.now + 60);
             this.deliverCarried(c) || this.finish(c, 3);
             return;
@@ -953,15 +1355,16 @@ export class Citizens {
         }
         // an der Baustelle: abliefern
         if (site && !site.built) {
-          site.woodDelivered += c.carryAmount;
-          site.woodReserved = Math.max(0, site.woodReserved - t.amount);
+          site.delivered[good] += c.carryAmount;
+          site.reserved[good] = Math.max(0, site.reserved[good] - t.amount);
+          b.version++;
           c.carry = null;
           c.carryAmount = 0;
           t.phase = 2;
           this.finish(c, 0.3);
           return;
         }
-        // Baustelle weg: Holz zurück ins Lager
+        // Baustelle weg: Ware zurück ins Lager
         t.phase = 2;
         if (!this.deliverCarried(c)) this.finish(c, 3);
         return;
@@ -1000,8 +1403,7 @@ export class Citizens {
     if (!l) return false;
     const path = env.path.find(this.cell(c), b.ring(l).filter((i) => env.walkable(i)));
     if (!path) return false;
-    const kind: TaskKind = c.carry === 'holz' ? 'chop' : 'gather';
-    c.task = { kind, building: l.id, target: -1, phase: 1, timer: 0, amount: 0, other: -1 };
+    c.task = task('deliver', l.id, { phase: 1 });
     c.path = path;
     c.pathIdx = 0;
     c.state = path.length === 0 ? 'work' : 'walk';
@@ -1063,6 +1465,7 @@ export class Citizens {
       birthProgress: this.birthProgress,
       now: this.now,
       dayTimer: this.dayTimer,
+      toolBonus: this.toolBonus,
     };
   }
 
@@ -1089,6 +1492,7 @@ export class Citizens {
     this.birthProgress = s.birthProgress;
     this.now = s.now;
     this.dayTimer = s.dayTimer;
+    this.toolBonus = s.toolBonus ?? false;
     this.unreachable.clear();
     this.assignTimer = 0;
   }

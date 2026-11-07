@@ -1,17 +1,22 @@
 import type { BuildingId } from '../data/buildings';
+import type { Stock } from '../data/goods';
+import type { TechId } from '../data/tech';
 import type { SaveGame, SaveMeta } from './save';
 import type { Tool, Weather, WorldStats } from './world';
 
 /** Nachrichten vom Hauptthread an den Simulations-Worker */
 export type ToWorker =
-  | { type: 'init'; scenario: string; seed: number; w: number; h: number; freeBuild?: boolean }
+  | { type: 'init'; scenario: string; seed: number; w: number; h: number; freeBuild?: boolean; unlockAll?: boolean }
   | { type: 'load'; data: SaveGame }
   | { type: 'save'; slot: string; name: string }
   | { type: 'edit'; tool: Tool; cells: number[]; damHeight: number }
   | { type: 'weather'; weather: Weather }
   | { type: 'speed'; speed: number }
   | { type: 'place'; id: BuildingId; x: number; y: number }
-  | { type: 'demolish'; cell: number };
+  | { type: 'demolish'; cell: number }
+  | { type: 'research'; tech: TechId }
+  /** alles freischalten (Baukasten) */
+  | { type: 'unlock' };
 
 export interface BuildingSnap {
   id: number;
@@ -23,9 +28,14 @@ export interface BuildingSnap {
   progress: number;
   workers: number;
   residents: number;
-  wood: number;
-  berries: number;
-  woodDelivered: number;
+  /** Vorrat (Lager) */
+  stock: Stock;
+  /** Anteil der gelieferten Baustoffe 0..1 */
+  delivered: number;
+  /** gelieferte Baustoffe je Ware */
+  deliveredGoods: Stock;
+  /** Reife der Ernte 0..1 */
+  growth: number;
   flooded: boolean;
   damage: number;
   /** erzeugter Strom (Wasserrad, Laufrad) oder Anteil der Versorgung (Verbraucher) */
