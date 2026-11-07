@@ -1,5 +1,6 @@
 import { BUILDINGS, BUILDING_ORDER, CATEGORY_LABEL, DAM_WOOD_PER_LEVEL, DRINK_SPOTS, GATE_WOOD, type BuildingCategory, type BuildingId } from '../data/buildings';
 import { costText, FOODS, GOOD_LABEL, GOODS } from '../data/goods';
+import { DAILY_ID, dailyScore } from '../data/daily';
 import { goalText } from '../data/maps';
 import { TECH_FOR, TECH_ORDER, TECHS, type TechId } from '../data/tech';
 import type { BuildingSnap, SimStats } from '../sim/protocol';
@@ -88,6 +89,7 @@ export const ICONS: Record<string, string> = {
   settings: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/>',
   flood: '<path d="M3 8c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/><path d="M3 13c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/><path d="M3 18c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/>',
   trophy: '<path d="M8 4h8v5a4 4 0 0 1-8 0z"/><path d="M8 6H5v2a3 3 0 0 0 3 3M16 6h3v2a3 3 0 0 1-3 3"/><path d="M12 13v4M8 21h8M10 17h4v4"/>',
+  calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M8 14h3M13 14h3M8 18h3"/>',
 };
 
 export function icon(name: string): string {
@@ -546,6 +548,9 @@ export class Hud {
       }
       this.goal.innerHTML = `${icon(done ? 'trophy' : 'ziel')}<div class="goal-text"><b>${done ? 'Ziel erreicht' : 'Ziel'}</b><small>${parts.join(' · ')}</small></div>`;
       this.goal.title = `${s.scenarioName}: ${goalText(s.goal)}`;
+    } else if (s.scenario === DAILY_ID) {
+      this.goal.innerHTML = `${icon('trophy')}<div class="goal-text"><b>Tageskarte</b><small>${dailyScore(info.day - 1, s.population)} Punkte · Tag ${info.day}</small></div>`;
+      this.goal.title = `${s.scenarioName}: 10 Punkte je überstandenem Tag, 5 je Otter`;
     } else {
       this.goal.innerHTML = `${icon('ziel')}<div class="goal-text"><b>Freies Spiel</b><small>kein Ziel</small></div>`;
       this.goal.title = s.scenarioName;

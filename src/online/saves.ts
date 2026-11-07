@@ -137,3 +137,26 @@ export function formatSavedAt(ms: number): string {
   const d = new Date(ms);
   return d.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
+
+const NAME_KEY = 'waterwake.name';
+
+/** Spielername für die Bestenliste, höchstens 20 Zeichen */
+export function loadName(): string {
+  const s = storage();
+  if (!s) return '';
+  try {
+    return (s.getItem(NAME_KEY) ?? '').slice(0, 20);
+  } catch {
+    return '';
+  }
+}
+
+export function saveName(name: string): void {
+  const s = storage();
+  if (!s) return;
+  try {
+    s.setItem(NAME_KEY, name.trim().slice(0, 20));
+  } catch {
+    // voll oder gesperrt: dann eben nicht
+  }
+}

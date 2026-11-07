@@ -99,3 +99,112 @@ export async function cloudDelete(slot: number): Promise<void> {
   const { error } = await c.from('ww_saves').delete().eq('slot', slot);
   if (error) throw new Error(error.message);
 }
+
+// --- Tageskarte: Bestenliste in ww_daily --------------------------------------
+
+export interface DailyRow {
+  name: string;
+  score: number;
+  days: number;
+  population: number;
+  /** die eigene Zeile */
+  me: boolean;
+}
+
+export interface DailyBoard {
+  /** die besten zehn des Tages */
+  rows: DailyRow[];
+  /** eigener Platz, wenn schon eine Wertung abgegeben wurde */
+  me: { rank: number; score: number; days: number; population: number } | null;
+  /** Spieler mit Wertung an diesem Tag */
+  total: number;
+}
+
+export interface DailyResult {
+  /** beste Wertung des Tages, die jetzt zählt */
+  score: number;
+  rank: number;
+  total: number;
+  /** die abgegebene Wertung war besser als die bisherige */
+  improved: boolean;
+}
+
+interface DailyRaw {
+  user_id: string;
+  name: string;
+  score: number;
+  days: number;
+  population: number;
+}
+
+/** Nutzer-Id, falls in diesem Browser schon ein Konto besteht; legt keins an */
+export async function cloudUserId(): Promise<string | null> {
+  const c = await client();
+  const { data } = await c.auth.getSession();
+  return data.session?.user.id ?? null;
+}
+
+/** Besteht in diesem Browser schon ein Konto? Lädt die Bibliothek nicht */
+export function cloudHasAccount(): boolean {
+  try {
+    return !!window.localStorage.getItem('waterwake.auth');
+  } catch {
+    return false;
+  }
+}
+
+async function dailyRank(c: SupabaseClient, key: string, score: number): Promise<number> {
+  const { count, error } = await c.from('ww_daily').select('*', { count: 'exact', head: true }).eq('day_key', key).gt('score', score);
+  if (error) throw new Error(error.message);
+  return (count ?? 0) + 1;
+}
+
+async function dailyTotal(c: SupabaseClient, key: string): Promise<number> {
+  const { count, error } = await c.from('ww_daily').select('*', { count: 'exact', head: true }).eq('day_key', key);
+  if (error) throw new Error(error.message);
+  return count ?? 0;
+}
+
+/** Die besten zehn des Tages und der eigene Platz; lesen geht ohne Konto */
+export async function dailyBoard(key: string): Promise<DailyBoard> {
+  const c = await client();
+  const me = await cloudUserId();
+  const { data, error } = await c
+    .from('ww_daily')
+    .select('user_id,name,score,days,population')
+    .eq('day_key', key)
+    .order('score', { ascending: false })
+    .order('updated_at', { ascending: true })
+    .limit(10);
+  if (error) throw new Error(error.message);
+  const rows = ((data ?? []) as DailyRaw[]).map((r) => ({ name: r.name, score: r.score, days: r.days, population: r.population, me: r.user_id === me }));
+  const total = await dailyTotal(c, key);
+  let mine: DailyBoard['me'] = null;
+  if (me) {
+    const { data: own, error: e2 } = await c.from('ww_daily').select('score,days,population').eq('day_key', key).eq('user_id', me).maybeSingle();
+    if (e2) throw new Error(e2.message);
+    if (own) {
+      const o = own as { score: number; days: number; population: number };
+      mine = { rank: await dailyRank(c, key, o.score), score: o.score, days: o.days, population: o.population };
+    }
+  }
+  return { rows, me: mine, total };
+}
+
+/** Wertung abgeben; nur die beste des Tages bleibt stehen. Legt bei Bedarf ein anonymes Konto an */
+export async function dailySubmit(key: string, name: string, score: number, days: number, population: number): Promise<DailyResult> {
+  const c = await client();
+  const userId = await cloudConnect();
+  const { data: own, error: e1 } = await c.from('ww_daily').select('score').eq('day_key', key).eq('user_id', userId).maybeSingle();
+  if (e1) throw new Error(e1.message);
+  const old = own ? (own as { score: number }).score : -1;
+  const improved = score > old;
+  if (improved) {
+    const { error } = await c
+      .from('ww_daily')
+      .upsert({ user_id: userId, day_key: key, name, score, days, population, updated_at: new Date().toISOString() }, { onConflict: 'user_id,day_key' });
+    if (error) throw new Error(error.message);
+  }
+  const best = improved ? score : old;
+  return { score: best, rank: await dailyRank(c, key, best), total: await dailyTotal(c, key), improved };
+}

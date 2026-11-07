@@ -1052,3 +1052,71 @@ button.start-card:hover {
 .row.open b {
   color: var(--bad);
 }
+
+/* Tageskarte und Bestenliste */
+
+.daily-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0;
+}
+
+.daily-row label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.daily-row input[type='text'] {
+  width: 150px;
+  font: inherit;
+  padding: 4px 6px;
+  border: 1px solid var(--wood-2);
+  border-radius: 6px;
+  background: white;
+}
+
+.daily-row .btn {
+  margin-left: auto;
+}
+
+.board-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 4px;
+  border-top: 1px solid var(--paper-2);
+}
+
+.board-row .rank {
+  width: 26px;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.board-row .name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-row .pts {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.board-row small {
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.board-row.me {
+  background: var(--paper-2);
+  border-radius: 6px;
+}
