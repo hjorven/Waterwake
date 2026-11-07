@@ -73,6 +73,16 @@ Spielen: https://hjorven.github.io/Waterwake/
   bringt mehr Nachwuchs. Sie schwimmen schneller als sie laufen, trinken in der
   Dürre doppelt so viel und leiden stärker unter schmutzigem Wasser. Das freie
   Spiel lässt das Volk wählen.
+- **M6, Teil 2: Flusskette**: Mehrere Spieler bilden einen Fluss (Startmenü
+  unter Flusskette: Kette anlegen oder per Code beitreten, auch mit
+  `?kette=ABC234`). Jede Minute meldet das laufende Spiel seinen Abfluss am
+  Kartenrand als Anteil am normalen Zufluss (Supabase-Tabellen `ww_rivers`
+  und `ww_river_members`, Funktionen `ww_river_create`, `ww_river_join`,
+  `ww_river_report`). Der Spieler darunter bekommt daraus seinen Quellfaktor:
+  60 % des Zuflusses folgen dem Abfluss von oben (begrenzt auf 20 bis 300 %),
+  der Rest bleibt Grundwert; wer länger als 15 Minuten nichts meldet, wird
+  übersprungen. Die Leiste zeigt den Zufluss von oben, das Menü die Kette mit
+  den Nachbarn.
 
 ## Steuerung
 

@@ -1,5 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { makeCode, validateMap, type CustomMap, type SharedMapInfo } from '../data/custom';
+import type { RiverInfo, RiverLink, RiverMember } from '../data/river';
+import { isSpecies } from '../data/species';
 import type { SaveGame, SaveMeta } from '../sim/save';
 import type { SaveEntry } from './saves';
 
@@ -295,5 +297,107 @@ export async function mapList(limit = 10): Promise<SharedMapInfo[]> {
 export async function mapPlayed(code: string): Promise<void> {
   const c = await client();
   const { error } = await c.rpc('ww_map_played', { p_code: code });
+  if (error) throw new Error(error.message);
+}
+
+// --- Flusskette ----------------------------------------------------------------
+
+interface RiverRow {
+  id: string;
+  code: string;
+  name: string;
+}
+
+interface MemberRow {
+  user_id: string;
+  position: number;
+  player: string;
+  outflow: number;
+  scenario_name: string;
+  day: number;
+  year: number;
+  population: number;
+  species: string;
+  updated_at: string;
+}
+
+/** Neue Kette anlegen; der Urheber steht ganz oben */
+export async function riverCreate(name: string, player: string): Promise<RiverLink> {
+  const c = await client();
+  await cloudConnect();
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const code = makeCode();
+    const { data, error } = await c.rpc('ww_river_create', { p_name: name, p_player: player, p_code: code });
+    if (!error) return { id: String(data), code, name };
+    // 23505 = Code schon vergeben, dann einen neuen würfeln
+    if (error.code !== '23505') throw new Error(error.message);
+  }
+  throw new Error('Kein freier Code gefunden, bitte nochmal versuchen');
+}
+
+/** Per Code beitreten, ans untere Ende der Kette */
+export async function riverJoin(code: string, player: string): Promise<RiverLink> {
+  const c = await client();
+  await cloudConnect();
+  const { data, error } = await c.rpc('ww_river_join', { p_code: code, p_player: player });
+  if (error) throw new Error(error.message);
+  const { data: row, error: e2 } = await c.from('ww_rivers').select('id,code,name').eq('id', String(data)).maybeSingle();
+  if (e2) throw new Error(e2.message);
+  if (!row) throw new Error(`Keine Kette mit dem Code ${code}`);
+  const r = row as RiverRow;
+  return { id: r.id, code: r.code, name: r.name };
+}
+
+/** Kette mit allen Mitgliedern lesen (geht ohne Konto) */
+export async function riverInfo(id: string): Promise<RiverInfo> {
+  const c = await client();
+  const me = await cloudUserId();
+  const { data: river, error } = await c.from('ww_rivers').select('id,code,name').eq('id', id).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!river) throw new Error('Die Kette gibt es nicht mehr');
+  const { data: rows, error: e2 } = await c
+    .from('ww_river_members')
+    .select('user_id,position,player,outflow,scenario_name,day,year,population,species,updated_at')
+    .eq('river_id', id)
+    .order('position');
+  if (e2) throw new Error(e2.message);
+  const members: RiverMember[] = ((rows ?? []) as MemberRow[]).map((r) => ({
+    userId: r.user_id,
+    position: r.position,
+    player: r.player ?? '',
+    outflow: Number(r.outflow) || 0,
+    scenarioName: r.scenario_name ?? '',
+    day: r.day ?? 0,
+    year: r.year ?? 0,
+    population: r.population ?? 0,
+    species: isSpecies(r.species) ? r.species : 'otter',
+    updatedAt: Date.parse(r.updated_at) || 0,
+    me: r.user_id === me,
+  }));
+  const rv = river as RiverRow;
+  return { id: rv.id, code: rv.code, name: rv.name, members };
+}
+
+/** Eigenen Abfluss und Spielstand melden */
+export async function riverReport(id: string, share: number, scenarioName: string, day: number, year: number, population: number, species: string): Promise<void> {
+  const c = await client();
+  await cloudConnect();
+  const { error } = await c.rpc('ww_river_report', {
+    p_river: id,
+    p_outflow: Math.max(0, Math.min(10, share)),
+    p_scenario: scenarioName,
+    p_day: day,
+    p_year: year,
+    p_population: population,
+    p_species: species,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** Die Kette verlassen; der eigene Eintrag verschwindet, die anderen rücken nicht nach */
+export async function riverLeave(id: string): Promise<void> {
+  const c = await client();
+  const me = await cloudConnect();
+  const { error } = await c.from('ww_river_members').delete().eq('river_id', id).eq('user_id', me);
   if (error) throw new Error(error.message);
 }

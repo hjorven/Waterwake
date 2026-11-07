@@ -1121,6 +1121,24 @@ button.start-card:hover {
   border-radius: 6px;
 }
 
+/* Flusskette: Name und Prozent bleiben stehen, die Einzelheiten dürfen umbrechen */
+.board-row.river {
+  display: grid;
+  grid-template-columns: 26px minmax(4em, max-content) 1fr auto;
+}
+
+.board-row.river .name {
+  max-width: 11em;
+}
+
+.board-row.river small {
+  min-width: 0;
+}
+
+.board-row.river .pts {
+  white-space: nowrap;
+}
+
 /* Karteneditor */
 
 #hud.editor .res {

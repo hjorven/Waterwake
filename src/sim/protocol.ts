@@ -20,6 +20,8 @@ export type ToWorker =
   | { type: 'demolish'; cell: number }
   | { type: 'research'; tech: TechId }
   /** alles freischalten (Baukasten) */
+  /** Flusskette: Zufluss von oben als Faktor auf die Quellen */
+  | { type: 'river'; factor: number }
   | { type: 'unlock' };
 
 export interface BuildingSnap {

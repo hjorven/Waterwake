@@ -37,6 +37,8 @@ export const START_WOOD = SPECIES.otter.startStock.holz ?? 0;
 export const START_BERRIES = SPECIES.otter.startStock.beeren ?? 0;
 /** Bewohner zu Beginn, bei beiden Völkern gleich */
 export const START_OTTERS = 6;
+/** Glättung des Abfluss-Zählers in Sekunden (etwa ein Tag) */
+const OUTFLOW_TAU = DAY;
 
 /** Faktor von Strömungsstärke zu Strom am Wasserrad */
 export const WHEEL_FACTOR = 0.8;
@@ -87,6 +89,10 @@ export interface WorldStats {
   waterPollution: number;
   /** höchste Verschmutzung auf der Karte 0..1 */
   riverPollution: number;
+  /** Flusskette: Anteil des normalen Zuflusses, der von oben kommt (1 ohne Kette) */
+  riverFactor: number;
+  /** Abfluss im Verhältnis zum normalen Zufluss, 1 = alles fließt durch */
+  outflowShare: number;
   power: PowerStats;
   /** es gibt Stromgebäude, dann wird der Stromhaushalt angezeigt */
   hasPower: boolean;
@@ -149,6 +155,11 @@ export class World implements Env {
   /** Technologie je Gebäude für das Volk */
   private techFor: Partial<Record<BuildingId, TechId>> = techTable(SPECIES.otter.techs);
   weather: Weather = 'normal';
+  /** Flusskette: Faktor auf die Quellen aus dem Abfluss des Spielers oberhalb, 1 ohne Kette */
+  riverFactor = 1;
+  /** Abfluss über den Kartenrand je Sekunde, geglättet über etwa einen Tag */
+  outflowAvg = 0;
+  private lastDrainedTotal = 0;
   /** Jahreszeiten laufen automatisch, false nach manuellem Eingriff */
   autoSeasons = true;
   /** Baukasten: Wasserbau kostet kein Holz */
@@ -240,7 +251,12 @@ export class World implements Env {
    */
   /** Wasser einschwingen lassen, Pflanzen setzen und, wenn gewünscht, den Clan mit Lager absetzen */
   settle(withClan = true): void {
-    for (let i = 0; i < 1600; i++) this.water.step(SIM_DT);
+    for (let i = 0; i < 1200; i++) this.water.step(SIM_DT);
+    // die letzten 20 Sekunden messen den Abfluss, damit der Zähler der Flusskette nicht bei null beginnt
+    const before = this.water.drainedTotal;
+    for (let i = 0; i < 400; i++) this.water.step(SIM_DT);
+    this.outflowAvg = (this.water.drainedTotal - before) / (400 * SIM_DT);
+    this.lastDrainedTotal = this.water.drainedTotal;
     this.veg.updateMoisture(this.water.depth);
     const start = withClan ? this.chooseStart() : -1;
     const blocked = new Set<number>();
@@ -471,11 +487,32 @@ export class World implements Env {
   setWeather(weather: Weather): void {
     this.weather = weather;
     const info = WEATHER_INFO[weather];
-    this.water.sourceFactor = info.sourceFactor;
+    // mit Flutwelle und Kette zusammen höchstens das Zehnfache, sonst wird es absurd
+    this.water.sourceFactor = Math.min(10, info.sourceFactor * this.riverFactor);
     this.water.sourcePollution = info.pollution;
     this.water.evaporation = info.evaporation;
     // In der Dürre regnet es nicht: Feuchte nur noch nahe am Wasser
     this.veg.ambient = weather === 'duerre' ? 0 : 1;
+  }
+
+  /** Flusskette: Zufluss von oben setzen, 1 = normal */
+  setRiverFactor(factor: number): void {
+    this.riverFactor = Number.isFinite(factor) ? Math.max(0, Math.min(5, factor)) : 1;
+    this.setWeather(this.weather);
+  }
+
+  /** Zufluss aller Quellen bei Normalwetter je Sekunde */
+  sourceBase(): number {
+    let s = 0;
+    for (const q of this.water.sources) s += q.rate;
+    return s;
+  }
+
+  /** Abfluss im Verhältnis zum normalen Zufluss: 1 = alles fließt durch, 0 = nichts kommt unten an */
+  outflowShare(): number {
+    const base = this.sourceBase();
+    // ohne Quellen gibt es keinen Fluss, dann soll unten normales Wasser ankommen
+    return base > 0 ? this.outflowAvg / base : 1;
   }
 
   /** Wetter von Hand setzen, schaltet den Jahreslauf ab */
@@ -487,6 +524,9 @@ export class World implements Env {
   step(dt = SIM_DT): void {
     this.water.step(dt);
     this.time += dt;
+    const drained = this.water.drainedTotal - this.lastDrainedTotal;
+    this.lastDrainedTotal = this.water.drainedTotal;
+    this.outflowAvg += (drained / dt - this.outflowAvg) * Math.min(1, dt / OUTFLOW_TAU);
     const change = this.seasons.step(dt);
     if (change && this.autoSeasons) {
       this.setWeather(change);
@@ -779,6 +819,8 @@ export class World implements Env {
       waterCap: this.buildings.waterCapacity(),
       waterPollution: this.store.pollution,
       riverPollution: this.water.maxPollution(),
+      riverFactor: this.riverFactor,
+      outflowShare: this.outflowShare(),
       power: { supply: this.power.supply, demand: this.power.demand, ratio: this.power.ratio },
       hasPower: [...this.buildings.alive()].some((b) => BUILDINGS[b.def].category === 'strom'),
       season: this.seasons.info(this.hasObservatory()),

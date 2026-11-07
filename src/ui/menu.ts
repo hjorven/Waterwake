@@ -1,6 +1,7 @@
 import { AUTHOR_MAX, MAP_NAME_MAX, isMapCode, newMapId, normalizeCode, validateGoal, type CustomMap, type MapCore, type SharedMapInfo } from '../data/custom';
 import { DAILY_ID, dailyDateText, dailyKey } from '../data/daily';
 import { CAMPAIGN, CAMPAIGNS, MOLCH_CAMPAIGN, SCENARIOS, goalText, isUnlocked, nextScenario, requiredWin, speciesOf, type Goal, type Scenario } from '../data/maps';
+import { activeDownstreamOf, activeUpstreamOf, factorFrom, isFresh, type RiverInfo, type RiverLink } from '../data/river';
 import { SPECIES, SPECIES_ORDER, type Species } from '../data/species';
 import { CLOUD_SLOTS, type DailyBoard, type DailyResult } from '../online/cloud';
 import { LOCAL_SLOTS, formatSavedAt, slotLabel, type SaveEntry, type Settings } from '../online/saves';
@@ -53,6 +54,12 @@ export interface MenuCallbacks {
   onMapList(): Promise<SharedMapInfo[]>;
   /** die Karte, die gerade im Editor liegt */
   editing(): CustomMap | null;
+  // Flusskette
+  riverLink(): RiverLink | null;
+  onRiverCreate(name: string, player: string): Promise<void>;
+  onRiverJoin(code: string, player: string): Promise<void>;
+  onRiverLeave(): Promise<void>;
+  onRiverRefresh(): Promise<void>;
 }
 
 /** Stand des laufenden Spiels auf der Tageskarte */
@@ -65,7 +72,7 @@ export interface DailyScore {
   submitted: boolean;
 }
 
-export type MenuView = 'start' | 'menu' | 'campaign' | 'daily' | 'maps' | 'mapsave' | 'saves' | 'settings' | 'intro' | 'end' | null;
+export type MenuView = 'start' | 'menu' | 'campaign' | 'daily' | 'river' | 'maps' | 'mapsave' | 'saves' | 'settings' | 'intro' | 'end' | null;
 
 function metaText(e: SaveEntry | undefined): string {
   if (!e) return 'leer';
@@ -112,6 +119,9 @@ export class Menu {
   private sharedError = '';
   private sharedBusy = false;
   private mapBusy = false;
+  private riverInfo: RiverInfo | null = null;
+  private riverBusy = false;
+  private riverError = '';
 
   constructor(parent: HTMLElement, cb: MenuCallbacks) {
     this.cb = cb;
@@ -159,6 +169,7 @@ export class Menu {
     this.back = 'start';
     const auto = this.cb.listLocal().find((e) => e.slot === 'auto');
     const won = this.cb.campaignWon();
+    const river = this.cb.riverLink();
     const all = CAMPAIGNS.flat();
     const next = all.find((sc) => !won.includes(sc.id) && isUnlocked(sc.id, won));
     const wonCount = all.filter((sc) => won.includes(sc.id)).length;
@@ -173,6 +184,7 @@ export class Menu {
         <button class="start-card" data-act="campaign">${icon('trophy')}<b>Kampagnen</b><small>${campaignText}</small></button>
         <button class="start-card" data-act="daily">${icon('calendar')}<b>Tageskarte</b><small>Karte vom ${dailyDateText(dailyKey())}, für alle gleich. Wertung in der Bestenliste.</small></button>
         <button class="start-card" data-act="maps">${icon('editor')}<b>Karteneditor</b><small>Eigene Täler bauen, teilen und per Code spielen.</small></button>
+        <button class="start-card" data-act="river">${icon('river')}<b>Flusskette</b><small>${river ? `Kette „${esc(river.name)}“, Code ${river.code}. Was oben abfließt, kommt bei dir als Quelle an.` : 'Mehrere Spieler bilden einen Fluss: Was oben abfließt, kommt unten als Quelle an.'}</small></button>
         ${auto ? `<button class="start-card" data-act="continue">${icon('play')}<b>Weiterspielen</b><small>${metaText(auto)}</small></button>` : ''}
         <button class="start-card" data-act="saves">${icon('save')}<b>Spielstände</b><small>Laden aus dem Browser oder der Cloud.</small></button>
         <button class="start-card" data-act="settings">${icon('settings')}<b>Einstellungen</b><small>Miniatur-Unschärfe, Schatten.</small></button>
@@ -221,6 +233,7 @@ export class Menu {
       <div class="menu-list">
         <button class="btn" data-act="resume">${icon('play')}Weiterspielen</button>
         <button class="btn secondary" data-act="saves">${icon('save')}Spielstände speichern und laden</button>
+        <button class="btn secondary" data-act="river">${icon('river')}Flusskette${this.cb.riverLink() ? `: ${esc(this.cb.riverLink()!.name)}` : ''}</button>
         <button class="btn secondary" data-act="settings">${icon('settings')}Einstellungen</button>
         <button class="btn secondary" data-act="main">${icon('menu')}Hauptmenü</button>
       </div>`,
@@ -250,6 +263,97 @@ export class Menu {
       ${rows(MOLCH_CAMPAIGN).join('')}
       <div class="btn-row"><button class="btn secondary" data-act="back">Zurück</button></div>`,
     );
+  }
+
+  // --- Flusskette ---------------------------------------------------------------
+
+  showRiver(): void {
+    const from: MenuView = this.view === 'start' || (this.view === 'river' && this.back === 'start') ? 'start' : 'menu';
+    this.view = 'river';
+    this.back = from;
+    const link = this.cb.riverLink();
+    const busy = this.riverBusy ? 'disabled' : '';
+    const error = this.riverError ? `<p class="note bad">${esc(this.riverError)}</p>` : '';
+    if (!link) {
+      this.dialog(
+        'Flusskette',
+        `<p class="note">Mehrere Spieler bilden einen Fluss. Wer in der Kette oben steht, gibt sein Wasser nach unten weiter: Was bei ihm am Kartenrand abfließt, kommt beim Spieler darunter aus den Quellen. Staut er, wird es unten knapp; lässt er die Flutwelle durch, kommt sie unten an. Gemeldet wird jede Minute, solange gespielt wird; dafür reicht das anonyme Konto.</p>
+        <div class="daily-row">${nameInput(this.cb.getName())}</div>
+        <div class="daily-row">
+          <label>Neue Kette <input class="river-name" type="text" maxlength="40" placeholder="Name der Kette"></label>
+          <button class="btn" data-act="river-create" ${busy}>${icon('river')}Anlegen</button>
+        </div>
+        <div class="daily-row">
+          <label>Code <input class="river-code" type="text" maxlength="6" placeholder="ABC123" autocapitalize="characters"></label>
+          <button class="btn" data-act="river-join" ${busy}>${icon('cloud')}Beitreten</button>
+        </div>
+        ${error}
+        <div class="btn-row"><button class="btn secondary" data-act="back">Zurück</button></div>`,
+      );
+      return;
+    }
+    const shareLink = `${location.origin}${location.pathname}?kette=${link.code}`;
+    this.dialog(
+      'Flusskette',
+      `<p class="note">Kette <b>${esc(link.name)}</b>, Code <b class="code">${link.code}</b><br>${esc(shareLink)}</p>
+      <div class="board">${this.riverHtml()}</div>
+      ${error}
+      <div class="btn-row">
+        <button class="btn secondary" data-act="river-refresh" ${busy}>${icon('cloud')}Aktualisieren</button>
+        <button class="btn secondary" data-act="river-leave" ${busy}>${icon('close')}Kette verlassen</button>
+        <button class="btn secondary" data-act="back">Zurück</button>
+      </div>`,
+    );
+  }
+
+  /** Stand der Kette aus dem Hauptprogramm übernehmen und die Ansicht auffrischen */
+  setRiverInfo(info: RiverInfo | null, error = ''): void {
+    this.riverInfo = info;
+    this.riverError = error;
+    if (this.view === 'river') this.showRiver();
+  }
+
+  private riverHtml(): string {
+    const info = this.riverInfo;
+    if (!info) return this.riverBusy ? '<p class="note">Kette wird geladen …</p>' : '';
+    if (!info.members.length) return '<p class="note">Noch niemand in der Kette.</p>';
+    const now = Date.now();
+    const up = activeUpstreamOf(info.members, now);
+    const down = activeDownstreamOf(info.members, now);
+    const rows = info.members.map((m) => {
+      const role = m === up ? ' · gibt dir Wasser' : m === down ? ' · bekommt dein Wasser' : '';
+      const fresh = isFresh(m.updatedAt, now);
+      const stand = m.scenarioName ? `${esc(m.scenarioName)} · Tag ${m.day}, Jahr ${m.year} · ${m.population} ${SPECIES[m.species].many}` : 'noch keine Meldung';
+      const age = m.updatedAt > 0 ? ` · ${fresh ? 'spielt gerade' : `zuletzt ${formatSavedAt(m.updatedAt)}`}` : '';
+      return `<div class="board-row river${m.me ? ' me' : ''}"><span class="rank">${m.position + 1}.</span><span class="name">${m.player ? esc(m.player) : 'Ohne Namen'}${m.me ? ' (du)' : ''}</span><small>${stand}${age}${role}</small><span class="pts" title="gemeldeter Abfluss">${fresh ? `${Math.round(m.outflow * 100)} %` : '–'}</span></div>`;
+    });
+    const factor = Math.round(factorFrom(info.members, now) * 100);
+    const me = info.members.find((m) => m.me);
+    const above = me ? info.members.some((m) => m.position < me.position) : false;
+    const note = me
+      ? up
+        ? `Rechts steht der gemeldete Abfluss, 100 % ist der normale Zufluss der jeweiligen Karte. Von ${up.player ? esc(up.player) : 'oben'} kommen bei dir gerade ${factor} % des normalen Zuflusses an.`
+        : above
+          ? 'Über dir spielt gerade niemand, deine Quellen laufen normal. Wer länger als 15 Minuten nichts meldet, wird übersprungen.'
+          : 'Du stehst ganz oben: deine Quellen laufen normal, dein Abfluss geht an den nächsten Spieler unter dir, der gerade spielt.'
+      : 'Du stehst nicht in dieser Kette. Verlasse sie und tritt mit dem Code neu bei.';
+    return `${rows.join('')}<p class="note">${note}</p>`;
+  }
+
+  /** Aktion an der Kette mit Sperre der Knöpfe; Fehler erscheinen im Dialog */
+  private riverAction(run: () => Promise<void>): void {
+    if (this.riverBusy) return;
+    this.riverBusy = true;
+    this.riverError = '';
+    this.showRiver();
+    run()
+      .catch((err: Error) => {
+        this.riverError = err.message;
+      })
+      .finally(() => {
+        this.riverBusy = false;
+        if (this.view === 'river') this.showRiver();
+      });
   }
 
   showDaily(): void {
@@ -778,6 +882,39 @@ export class Menu {
       case 'daily':
         this.board = null;
         this.showDaily();
+        break;
+      case 'river':
+        this.riverError = '';
+        this.showRiver();
+        if (this.cb.riverLink()) this.riverAction(() => this.cb.onRiverRefresh());
+        break;
+      case 'river-refresh':
+        this.riverAction(() => this.cb.onRiverRefresh());
+        break;
+      case 'river-create': {
+        this.saveNameInput();
+        const name = ((this.root.querySelector('.river-name') as HTMLInputElement | null)?.value ?? '').trim().slice(0, 40);
+        if (!name) {
+          this.riverError = 'Die Kette braucht einen Namen.';
+          this.showRiver();
+          break;
+        }
+        this.riverAction(() => this.cb.onRiverCreate(name, this.cb.getName()));
+        break;
+      }
+      case 'river-join': {
+        this.saveNameInput();
+        const code = normalizeCode((this.root.querySelector('.river-code') as HTMLInputElement | null)?.value ?? '');
+        if (!isMapCode(code)) {
+          this.riverError = 'Ein Code hat sechs Zeichen, zum Beispiel ABC234.';
+          this.showRiver();
+          break;
+        }
+        this.riverAction(() => this.cb.onRiverJoin(code, this.cb.getName()));
+        break;
+      }
+      case 'river-leave':
+        this.riverAction(() => this.cb.onRiverLeave());
         break;
       case 'daily-board':
         this.saveNameInput();

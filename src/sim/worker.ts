@@ -292,6 +292,9 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
     case 'research':
       world?.research(msg.tech);
       break;
+    case 'river':
+      world?.setRiverFactor(msg.factor);
+      break;
     case 'unlock':
       world?.unlockAll();
       break;

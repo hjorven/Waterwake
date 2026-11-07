@@ -5,9 +5,10 @@ import { costText } from './data/goods';
 import { CUSTOM_ID, coreFromData, customScenario, flatMap, isMapCode, newMapId, normalizeCode, type CustomMap, type MapCore } from './data/custom';
 import { DAILY_ID, dailyScore } from './data/daily';
 import { campaignIndex, freeScenario, OTTERTAL, scenarioById, speciesOf, type Scenario } from './data/maps';
+import { factorFrom, RIVER_INTERVAL_MS, type RiverInfo, type RiverLink } from './data/river';
 import { costFor, SPECIES, type Species } from './data/species';
 import { TECHS, techTable, type TechId } from './data/tech';
-import { cloudConnect, cloudDelete, cloudDownload, cloudHasAccount, cloudList, cloudUpload, dailyBoard, dailySubmit, mapDownload, mapList, mapPlayed, mapUpload, type DailyResult } from './online/cloud';
+import { cloudConnect, cloudDelete, cloudDownload, cloudHasAccount, cloudList, cloudUpload, dailyBoard, dailySubmit, mapDownload, mapList, mapPlayed, mapUpload, riverCreate, riverInfo, riverJoin, riverLeave, riverReport, type DailyResult } from './online/cloud';
 import {
   deleteLocalSave,
   deleteMap,
@@ -15,10 +16,12 @@ import {
   loadMaps,
   loadCampaign,
   loadName,
+  loadRiver,
   loadSettings,
   markCampaignWon,
   readLocalSave,
   saveName as savePlayerName,
+  saveRiver,
   saveSettings,
   upsertMap,
   writeLocalSave,
@@ -198,6 +201,8 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
       techFor = techTable(SPECIES[msg.species].techs);
       instances.setSpecies(msg.species);
       hud.setSpecies(msg.species);
+      // die neue Welt kennt die Flusskette noch nicht
+      if (river && riverFactorNow !== 1) send({ type: 'river', factor: riverFactorNow });
       hud.setVisible(true);
       running = true;
       editorMode = msg.editor;
@@ -447,6 +452,62 @@ function autoSubmitDaily(): void {
   );
 }
 
+// --- Flusskette ---------------------------------------------------------------
+let river: RiverLink | null = loadRiver();
+let riverState: RiverInfo | null = null;
+/** Faktor auf die Quellen, den die Simulation gerade kennt */
+let riverFactorNow = 1;
+
+function setRiver(link: RiverLink | null): void {
+  river = link;
+  riverState = null;
+  saveRiver(link);
+  hud.setRiver(link ? link.name : null);
+  if (!link && riverFactorNow !== 1) {
+    riverFactorNow = 1;
+    send({ type: 'river', factor: 1 });
+  }
+  menu.setRiverInfo(null, '');
+}
+
+/** Kette lesen, den Zufluss von oben in die Simulation geben und das Menü auffrischen */
+async function riverRefresh(): Promise<void> {
+  if (!river) return;
+  try {
+    const info = await riverInfo(river.id);
+    riverState = info;
+    const f = factorFrom(info.members);
+    if (f !== riverFactorNow) {
+      riverFactorNow = f;
+      send({ type: 'river', factor: f });
+    }
+    menu.setRiverInfo(info, '');
+  } catch (err) {
+    menu.setRiverInfo(riverState, (err as Error).message);
+    throw err;
+  }
+}
+
+/** Eigenen Abfluss melden, solange ein Spiel läuft */
+async function riverReportNow(): Promise<void> {
+  if (!river || !running || !stats || stats.editor || stats.population <= 0) return;
+  await riverReport(river.id, stats.outflowShare, stats.scenarioName, stats.season.day, stats.season.year, stats.population, stats.species);
+}
+
+async function riverTick(): Promise<void> {
+  if (!river) return;
+  try {
+    await riverReportNow();
+  } catch {
+    // dann eben bei der nächsten Runde
+  }
+  await riverRefresh();
+}
+
+setInterval(() => {
+  riverTick().catch(() => undefined);
+}, RIVER_INTERVAL_MS);
+
 const menu = new Menu(app, {
   onNewGame: (scenario, seed, freeBuild, species) => {
     menu.hide();
@@ -483,6 +544,21 @@ const menu = new Menu(app, {
   dailyBoard: (key) => dailyBoard(key),
   dailyScore: () => currentDaily(),
   onDailySubmit: (name) => submitDaily(name),
+  riverLink: () => river,
+  onRiverCreate: async (name, player) => {
+    setRiver(await riverCreate(name, player));
+    await riverTick();
+  },
+  onRiverJoin: async (code, player) => {
+    setRiver(await riverJoin(code, player));
+    await riverTick();
+  },
+  onRiverLeave: async () => {
+    // ohne Netz bleibt der eigene Eintrag stehen, verlassen wird die Kette trotzdem
+    if (river) await riverLeave(river.id).catch(() => undefined);
+    setRiver(null);
+  },
+  onRiverRefresh: () => riverRefresh(),
   listMaps: () => loadMaps(),
   onEditorNew: (seed) => {
     menu.hide();
@@ -812,6 +888,24 @@ if (params.has('editor')) {
   showStart();
 }
 
+// Flusskette: Chip in der Leiste und erster Abgleich; ?kette=ABC234 tritt einer Kette bei
+hud.setRiver(river ? river.name : null);
+{
+  const code = params.has('kette') ? normalizeCode(params.get('kette') ?? '') : '';
+  if (params.has('kette') && !isMapCode(code)) menu.toast('Der Code der Flusskette im Link ist ungültig.', true);
+  if (code && isMapCode(code) && (!river || river.code !== code)) {
+    riverJoin(code, loadName()).then(
+      (link) => {
+        setRiver(link);
+        if (menu.view === 'start') menu.showStart();
+        menu.toast(`Flusskette „${link.name}“ beigetreten.`);
+        return riverTick();
+      },
+      (err: Error) => menu.toast(`Flusskette: ${err.message}`, true),
+    );
+  } else if (river) riverTick().catch(() => undefined);
+}
+
 // Für Browsertests
 (window as unknown as { __waterwake: unknown }).__waterwake = {
   getStats: () => stats,
@@ -835,6 +929,8 @@ if (params.has('editor')) {
   setSpeed: (s: number) => setSpeed(s),
   newGame: (scenario: string, seed: number, free = false, species?: Species) => startGame(scenario, seed, free, species),
   getSpecies: () => currentSpecies,
+  getRiver: () => ({ link: river, info: riverState, factor: riverFactorNow }),
+  riverTick: () => riverTick(),
   save: (slot: string) => send({ type: 'save', slot, name: saveName() }),
   load: (slot: string) => {
     const data = readLocalSave(slot);
