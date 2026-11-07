@@ -45,6 +45,31 @@ export interface Citizen {
   cooldown: number;
   /** Arbeit, die in dieser Aufgabe geleistet wurde (Baufortschritt usw.) */
   work: number;
+  /** Alter in Tagen */
+  age: number;
+  /** Lebenserwartung in Tagen, steigt mit Zufriedenheit */
+  lifespan: number;
+  /** Junge arbeiten noch nicht */
+  child: boolean;
+  /** Zufriedenheit 0..1 */
+  mood: number;
+}
+
+/** Gespeicherte Form eines Bewohners, ohne laufende Aufgabe */
+export type CitizenSave = Pick<
+  Citizen,
+  'id' | 'name' | 'x' | 'y' | 'heading' | 'alive' | 'water' | 'food' | 'workplace' | 'home' | 'carry' | 'carryAmount' | 'age' | 'lifespan' | 'child' | 'mood'
+>;
+
+export interface CitizensSave {
+  list: CitizenSave[];
+  nameIdx: number;
+  births: number;
+  deaths: number;
+  grief: number;
+  birthProgress: number;
+  now: number;
+  dayTimer: number;
 }
 
 /** Was die Bewohner von der Welt brauchen */
@@ -60,6 +85,8 @@ export interface Env {
   walkable(i: number): boolean;
   store: { stored: number };
   waterCapacity(): number;
+  /** Zahl der Freude-Gebäude verschiedener Art, die diesen Punkt erreichen */
+  joyAt(x: number, y: number): number;
   /** Zellen, die gerade jemand als Ziel hat */
   reserved: Set<number>;
   log(msg: string): void;
@@ -69,6 +96,7 @@ export interface Env {
 const NAMES = [
   'Fjella', 'Brisk', 'Nuss', 'Kiesel', 'Welle', 'Tang', 'Moos', 'Flint', 'Ried', 'Schilf',
   'Perle', 'Uferle', 'Bimmel', 'Tropf', 'Kalla', 'Sprudel', 'Lotte', 'Wurzel', 'Pfütze', 'Grau',
+  'Nebel', 'Funke', 'Birke', 'Dotter', 'Fluse', 'Knirps', 'Mala', 'Rille', 'Sumpf', 'Tilda',
 ];
 
 const WALK_SPEED = 2.6;
@@ -83,14 +111,28 @@ const PICK_TIME = 3;
 const PLANT_TIME = 3;
 const HAUL_MAX = 6;
 const MAX_BUILDERS = 2;
+/** Tage, bis ein Junges erwachsen ist */
+export const CHILD_DAYS = 6;
+/** Zeitkonstante, mit der sich die Stimmung an die Lage anpasst */
+const MOOD_TIME = 0.5 * DAY;
+/** Geburten je Tag bei zwei zufriedenen Erwachsenen mit Hütte */
+const BIRTH_RATE = 0.12;
+/** Trauer nach einem Todesfall in Sekunden */
+const GRIEF_TIME = 2 * DAY;
 
 export class Citizens {
   readonly list: Citizen[] = [];
+  births = 0;
+  deaths = 0;
+  /** verbleibende Trauerzeit in Sekunden */
+  grief = 0;
   /** Zellen, zu denen zuletzt kein Weg gefunden wurde, mit Ablaufzeit */
   private readonly unreachable = new Map<number, number>();
   private now = 0;
   private nameIdx = 0;
   private assignTimer = 0;
+  private dayTimer = 0;
+  private birthProgress = 0;
   private noWaterWarned = false;
   private noFoodWarned = false;
 
@@ -110,26 +152,50 @@ export class Citizens {
     return n;
   }
 
-  spawn(x: number, y: number): Citizen {
+  children(): number {
+    let n = 0;
+  for (const c of this.list) if (c.alive && c.child) n++;
+    return n;
+  }
+
+  /** mittlere Zufriedenheit aller Lebenden, 0.5 wenn niemand lebt */
+  mood(): number {
+    let s = 0;
+    let n = 0;
+    for (const c of this.list) {
+      if (!c.alive) continue;
+      s += c.mood;
+      n++;
+    }
+    return n ? s / n : 0.5;
+  }
+
+  spawn(x: number, y: number, opts: { child?: boolean } = {}): Citizen {
+    const rnd = this.env.rnd;
+    const child = !!opts.child;
     const c: Citizen = {
       id: this.list.length,
       name: NAMES[this.nameIdx++ % NAMES.length],
       x: x + 0.5,
       y: y + 0.5,
-      heading: this.env.rnd() * Math.PI * 2,
+      heading: rnd() * Math.PI * 2,
       state: 'idle',
       alive: true,
       path: null,
       pathIdx: 0,
-      water: 0.8 + this.env.rnd() * 0.2,
-      food: 0.8 + this.env.rnd() * 0.2,
+      water: 0.8 + rnd() * 0.2,
+      food: 0.8 + rnd() * 0.2,
       workplace: -1,
       home: -1,
       carry: null,
       carryAmount: 0,
       task: null,
-      cooldown: this.env.rnd() * 2,
+      cooldown: rnd() * 2,
       work: 0,
+      age: child ? 0 : 8 + Math.floor(rnd() * 22),
+      lifespan: 55 + Math.floor(rnd() * 25),
+      child,
+      mood: 0.6,
     };
     this.list.push(c);
     return c;
@@ -141,11 +207,18 @@ export class Citizens {
 
   step(dt: number): void {
     this.now += dt;
+    if (this.grief > 0) this.grief -= dt;
     this.assignTimer -= dt;
     if (this.assignTimer <= 0) {
       this.assignTimer = 1;
       this.assignWork();
       this.assignHomes();
+      this.updateMood(1);
+    }
+    this.dayTimer += dt;
+    if (this.dayTimer >= DAY) {
+      this.dayTimer -= DAY;
+      this.daily();
     }
     for (const c of this.list) {
       if (!c.alive) continue;
@@ -172,6 +245,78 @@ export class Citizens {
     }
   }
 
+  // --- Stimmung, Alter, Geburten ------------------------------------------------
+
+  private updateMood(dt: number): void {
+    const env = this.env;
+    for (const c of this.alive()) {
+      let t = 0.55;
+      const home = env.buildings.get(c.home);
+      if (home) {
+        t += 0.15;
+        if (home.flooded) t -= 0.15;
+      } else {
+        t -= 0.25;
+      }
+      if (c.water < DRINK_AT || c.food < EAT_AT) t -= 0.2;
+      else if (c.water > 0.6 && c.food > 0.6) t += 0.1;
+      const at = home ? env.buildings.center(home) : c;
+      t += 0.1 * Math.min(2, env.joyAt(at.x, at.y));
+      if (this.grief > 0) t -= 0.15;
+      t = Math.max(0, Math.min(1, t));
+      c.mood += (t - c.mood) * Math.min(1, dt / MOOD_TIME);
+    }
+  }
+
+  private daily(): void {
+    for (const c of this.list) {
+      if (!c.alive) continue;
+      c.age += 1;
+      c.lifespan += (c.mood - 0.5) * 0.3;
+      if (c.child && c.age >= CHILD_DAYS) c.child = false;
+      if (c.age >= c.lifespan) this.die(c, 'in hohem Alter gestorben');
+    }
+    this.tryBirth();
+  }
+
+  private tryBirth(): void {
+    const env = this.env;
+    const b = env.buildings;
+    const housing = b.housing();
+    if (this.count() >= housing) return;
+    if (b.total('beeren') < 2) return;
+    let adults = 0;
+    let moodSum = 0;
+    for (const c of this.alive()) {
+      if (c.child || c.home < 0) continue;
+      adults++;
+      moodSum += c.mood;
+    }
+    if (adults < 2) return;
+    const factor = Math.max(0, Math.min(1, (moodSum / adults - 0.45) / 0.4));
+    this.birthProgress += BIRTH_RATE * (adults / 2) * factor;
+    while (this.birthProgress >= 1 && this.count() < housing) {
+      this.birthProgress -= 1;
+      if (!this.birth()) break;
+    }
+  }
+
+  private birth(): boolean {
+    const env = this.env;
+    const b = env.buildings;
+    const huts = [...b.alive()].filter((h) => h.built && BUILDINGS[h.def].housing > h.residents.length);
+    if (huts.length === 0) return false;
+    const hut = huts[Math.floor(env.rnd() * huts.length)];
+    const ring = b.ring(hut).filter((i) => env.walkable(i));
+    const cell = ring.length ? ring[Math.floor(env.rnd() * ring.length)] : hut.y * env.w + hut.x;
+    const c = this.spawn(cell % env.w, (cell / env.w) | 0, { child: true });
+    c.home = hut.id;
+    hut.residents.push(c.id);
+    this.births++;
+    env.log(`Ein Otterjunges ist geboren: ${c.name}.`);
+    return true;
+  }
+
   private die(c: Citizen, how: string): void {
     const env = this.env;
     c.alive = false;
@@ -180,7 +325,18 @@ export class Citizens {
     if (wp) wp.workers = wp.workers.filter((id) => id !== c.id);
     const home = env.buildings.get(c.home);
     if (home) home.residents = home.residents.filter((id) => id !== c.id);
+    this.deaths++;
+    this.grief = GRIEF_TIME;
     env.log(`${c.name} ist ${how}.`);
+  }
+
+  /** Ein Gebäude ist weg: Arbeitsplätze, Wohnplätze und Aufgaben dazu lösen */
+  detachBuilding(id: number): void {
+    for (const c of this.list) {
+      if (c.workplace === id) c.workplace = -1;
+      if (c.home === id) c.home = -1;
+      if (c.task && (c.task.building === id || c.task.other === id)) this.fail(c);
+    }
   }
 
   /** Reservierungen einer Aufgabe freigeben */
@@ -199,7 +355,7 @@ export class Citizens {
   private assignWork(): void {
     const env = this.env;
     const free: Citizen[] = [];
-    for (const c of this.alive()) if (c.workplace < 0) free.push(c);
+    for (const c of this.alive()) if (c.workplace < 0 && !c.child) free.push(c);
     if (free.length === 0) return;
     for (const b of env.buildings.alive()) {
       if (!b.built) continue;
@@ -265,6 +421,11 @@ export class Citizens {
     if (c.carry) {
       if (this.deliverCarried(c)) return;
       c.cooldown = 4;
+      return;
+    }
+    // Junge spielen nur
+    if (c.child) {
+      this.wander(c);
       return;
     }
     // 2. Arbeitsplatz
@@ -380,28 +541,26 @@ export class Citizens {
   private construction(c: Citizen): boolean {
     const env = this.env;
     const b = env.buildings;
-    // Holz liefern
-    let bestSite: Building | null = null;
-    let bestD = Infinity;
+    // Holz liefern: Holzfäller zuerst (sonst geht das Holz aus), dann
+    // angefangene Baustellen fertig beliefern, dann in Reihenfolge der
+    // Platzierung. So verteilt sich knappes Holz nicht auf viele Baustellen.
+    const sites: { s: Building; key: number }[] = [];
     for (const s of b.alive()) {
       if (s.built || b.woodNeeded(s) <= 0) continue;
-      const ctr = b.center(s);
-      const d = Math.abs(ctr.x - c.x) + Math.abs(ctr.y - c.y);
-      if (d < bestD) {
-        bestD = d;
-        bestSite = s;
-      }
+      const started = s.woodDelivered + s.woodReserved > 0 ? 0 : 1;
+      const key = (s.def === 'holzfaeller' ? 0 : 1) * 1e6 + started * 1e5 + s.id;
+      sites.push({ s, key });
     }
-    if (bestSite) {
-      const need = b.woodNeeded(bestSite);
+    sites.sort((a, b2) => a.key - b2.key);
+    for (const { s: site } of sites) {
+      const need = b.woodNeeded(site);
       const lager = b.storageWith('holz', 1, c.x, c.y);
-      if (lager) {
-        const amount = Math.min(need, HAUL_MAX, lager.stock.holz);
-        const task: Task = { kind: 'haul', building: bestSite.id, target: -1, phase: 0, timer: 0, amount, other: lager.id };
-        if (this.startTask(c, task, b.ring(lager))) {
-          bestSite.woodReserved += amount;
-          return true;
-        }
+      if (!lager) break;
+      const amount = Math.min(need, HAUL_MAX, lager.stock.holz);
+      const task: Task = { kind: 'haul', building: site.id, target: -1, phase: 0, timer: 0, amount, other: lager.id };
+      if (this.startTask(c, task, b.ring(lager))) {
+        site.woodReserved += amount;
+        return true;
       }
     }
     // Bauen
@@ -417,8 +576,11 @@ export class Citizens {
 
   private wander(c: Citizen): void {
     const env = this.env;
-    const cx = Math.floor(c.x);
-    const cy = Math.floor(c.y);
+    // Junge bleiben in der Nähe ihrer Hütte
+    const home = c.child ? env.buildings.get(c.home) : null;
+    const ctr = home ? env.buildings.center(home) : { x: c.x, y: c.y };
+    const cx = Math.floor(ctr.x);
+    const cy = Math.floor(ctr.y);
     const tx = cx + Math.floor(env.rnd() * 7) - 3;
     const ty = cy + Math.floor(env.rnd() * 7) - 3;
     c.cooldown = 3 + env.rnd() * 4;
@@ -467,7 +629,7 @@ export class Citizens {
     const ty = Math.floor(target / env.w) + 0.5;
     const here = this.cell(c);
     const swimming = env.depth[here] > 0.25;
-    const slow = c.home < 0 ? 0.8 : 1;
+    const slow = c.child ? 0.8 : 1;
     let budget = (swimming ? SWIM_SPEED : WALK_SPEED) * slow * dt;
     while (budget > 0) {
       const dx = tx - c.x;
@@ -558,8 +720,9 @@ export class Citizens {
       c.state = 'idle';
       return;
     }
-    const slow = c.home < 0 ? 0.75 : 1;
-    t.timer -= dt * slow;
+    // Zufriedene Otter arbeiten schneller
+    const pace = 0.7 + 0.5 * c.mood;
+    t.timer -= dt * pace;
     switch (t.kind) {
       case 'drink': {
         if (t.timer > 0) return;
@@ -599,7 +762,7 @@ export class Citizens {
           this.finish(c, 2);
           return;
         }
-        let want = Math.min(PUMP_RATE * slow * dt, cap - env.store.stored);
+        let want = Math.min(PUMP_RATE * pace * dt, cap - env.store.stored);
         for (const i of wet) {
           const take = Math.min(want, env.depth[i] * 0.5);
           env.depth[i] -= take;
@@ -647,7 +810,6 @@ export class Citizens {
           const got = lager ? Math.min(t.amount, lager.stock.holz) : 0;
           if (!site || site.built || got <= 0) {
             if (site) site.woodReserved = Math.max(0, site.woodReserved - t.amount);
-            if (lager && got > 0) lager.stock.holz -= 0; // nichts genommen
             this.fail(c);
             return;
           }
@@ -697,7 +859,7 @@ export class Citizens {
           return;
         }
         const def = BUILDINGS[site.def];
-        site.progress = Math.min(1, site.progress + (dt * slow) / def.buildTime);
+        site.progress = Math.min(1, site.progress + (dt * pace) / def.buildTime);
         if (site.progress >= 1) {
           site.built = true;
           b.version++;
@@ -750,5 +912,61 @@ export class Citizens {
     this.release(c);
     c.state = 'idle';
     c.cooldown = cooldown;
+  }
+
+  // --- Speichern ----------------------------------------------------------------
+
+  save(): CitizensSave {
+    return {
+      list: this.list.map((c) => ({
+        id: c.id,
+        name: c.name,
+        x: c.x,
+        y: c.y,
+        heading: c.heading,
+        alive: c.alive,
+        water: c.water,
+        food: c.food,
+        workplace: c.workplace,
+        home: c.home,
+        carry: c.carry,
+        carryAmount: c.carryAmount,
+        age: c.age,
+        lifespan: c.lifespan,
+        child: c.child,
+        mood: c.mood,
+      })),
+      nameIdx: this.nameIdx,
+      births: this.births,
+      deaths: this.deaths,
+      grief: this.grief,
+      birthProgress: this.birthProgress,
+      now: this.now,
+      dayTimer: this.dayTimer,
+    };
+  }
+
+  restore(s: CitizensSave): void {
+    this.list.length = 0;
+    for (const c of s.list) {
+      this.list.push({
+        ...c,
+        state: 'idle',
+        path: null,
+        pathIdx: 0,
+        task: null,
+        cooldown: this.env.rnd() * 2,
+        work: 0,
+      });
+    }
+    this.nameIdx = s.nameIdx;
+    this.births = s.births;
+    this.deaths = s.deaths;
+    this.grief = s.grief;
+    this.birthProgress = s.birthProgress;
+    this.now = s.now;
+    this.dayTimer = s.dayTimer;
+    this.unreachable.clear();
+    this.assignTimer = 0;
   }
 }

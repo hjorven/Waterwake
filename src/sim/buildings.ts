@@ -23,6 +23,10 @@ export interface Building {
   residents: number[];
   /** Vorrat (nur Lager) */
   stock: Record<Good, number>;
+  /** Hochwasserschaden 0..1, bei 1 ist das Gebäude verloren */
+  damage: number;
+  /** steht gerade im Hochwasser */
+  flooded: boolean;
 }
 
 export interface PlacementContext {
@@ -64,7 +68,7 @@ export function canPlaceAt(id: BuildingId, x: number, y: number, w: number, h: n
         }
       }
     }
-    if (!wet) return 'die Pumpe muss am Wasser stehen';
+    if (!wet) return `${def.name} muss am Wasser stehen`;
   }
   return null;
 }
@@ -147,11 +151,48 @@ export class Buildings {
       workers: [],
       residents: [],
       stock: { holz: 0, beeren: 0 },
+      damage: 0,
+      flooded: false,
     };
     this.list.push(b);
     for (const i of this.cells(b)) this.occ[i] = b.id;
     this.version++;
     return b;
+  }
+
+  /** Gespeicherte Gebäudeliste übernehmen (Spielstand laden) */
+  restore(list: Building[]): void {
+    this.list.length = 0;
+    this.occ.fill(-1);
+    for (const src of list) {
+      const b: Building = {
+        ...src,
+        workers: [...src.workers],
+        residents: [...src.residents],
+        stock: { holz: src.stock.holz ?? 0, beeren: src.stock.beeren ?? 0 },
+        // Lieferungen unterwegs gehen beim Laden verloren
+        woodReserved: 0,
+        damage: src.damage ?? 0,
+        flooded: src.flooded ?? false,
+      };
+      this.list.push(b);
+      if (b.alive) for (const i of this.cells(b)) this.occ[i] = b.id;
+    }
+    this.version++;
+  }
+
+  /** Tiefste Wasserstelle auf der Grundfläche */
+  maxDepthOn(b: Building, depth: Float32Array): number {
+    let d = 0;
+    for (const i of this.cells(b)) if (depth[i] > d) d = depth[i];
+    return d;
+  }
+
+  /** Freie Betten insgesamt */
+  freeBeds(): number {
+    let s = 0;
+    for (const b of this.alive()) if (b.built) s += Math.max(0, this.def(b).housing - b.residents.length);
+    return s;
   }
 
   remove(id: number): Building | null {

@@ -1,13 +1,26 @@
+export interface Rng {
+  (): number;
+  /** innerer Zustand, zum Speichern und Wiederherstellen */
+  state: number;
+}
+
 /** Kleiner, schneller Zufallsgenerator mit festem Startwert (mulberry32) */
-export function mulberry32(seed: number): () => number {
+export function mulberry32(seed: number): Rng {
   let a = seed >>> 0;
-  return () => {
+  const f = (() => {
     a = (a + 0x6d2b79f5) >>> 0;
     let t = a;
     t = Math.imul(t ^ (t >>> 15), t | 1);
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
+  }) as Rng;
+  Object.defineProperty(f, 'state', {
+    get: () => a,
+    set: (v: number) => {
+      a = v >>> 0;
+    },
+  });
+  return f;
 }
 
 /** Wertrauschen auf einem Gitter, weich interpoliert, Werte 0..1 */
