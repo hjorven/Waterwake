@@ -16,6 +16,8 @@ function groundColor(h: number, out: THREE.Color): void {
 
 const DAM_COLOR = new THREE.Color(0x6b5a45);
 const DAM_TOP = new THREE.Color(0x857257);
+/** Farbe von ausgedörrtem Gras */
+const DRY_COLOR = new THREE.Color(0xbfa257);
 
 /**
  * Gelände als Blockstufen pro Zelle: Deckfläche plus senkrechte Wände zu
@@ -32,13 +34,59 @@ export class TerrainRenderer {
   private struct: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
   private readonly cx: number;
   private readonly cy: number;
+  /** je Chunk: Vertex-Index der Deckfläche jeder Zelle (-1 = keine) */
+  private readonly topOffset: (Int32Array | null)[] = [];
+  /** je Chunk: ursprüngliche Farben vor der Trockenheitstönung */
+  private readonly baseColors: (Float32Array | null)[] = [];
+  private dry: Uint8Array<ArrayBufferLike> | null = null;
 
   constructor(w: number, h: number) {
     this.w = w;
     this.h = h;
     this.cx = Math.ceil(w / CHUNK);
     this.cy = Math.ceil(h / CHUNK);
-    for (let i = 0; i < this.cx * this.cy; i++) this.chunks.push(null);
+    for (let i = 0; i < this.cx * this.cy; i++) {
+      this.chunks.push(null);
+      this.topOffset.push(null);
+      this.baseColors.push(null);
+    }
+  }
+
+  /** Trockenheit je Zelle (0..255) färbt Gras gelb-braun */
+  setSoil(dry: Uint8Array<ArrayBufferLike>): void {
+    this.dry = dry;
+    for (let c = 0; c < this.chunks.length; c++) if (this.chunks[c]) this.tintChunk(c);
+  }
+
+  private tintChunk(c: number): void {
+    const mesh = this.chunks[c];
+    const offsets = this.topOffset[c];
+    const base = this.baseColors[c];
+    const dry = this.dry;
+    if (!mesh || !offsets || !base || !dry) return;
+    const attr = mesh.geometry.getAttribute('color') as THREE.BufferAttribute;
+    const arr = attr.array as Float32Array;
+    const chx = c % this.cx;
+    const chy = (c / this.cx) | 0;
+    for (let ly = 0; ly < CHUNK; ly++) {
+      for (let lx = 0; lx < CHUNK; lx++) {
+        const v = offsets[ly * CHUNK + lx];
+        if (v < 0) continue;
+        const x = chx * CHUNK + lx;
+        const y = chy * CHUNK + ly;
+        const i = y * this.w + x;
+        const g = this.ground[i];
+        const grass = this.struct[i] === 0 && g >= 3 && g <= 11;
+        const f = grass ? dry[i] / 255 : 0;
+        for (let k = 0; k < 6; k++) {
+          const o = (v + k) * 3;
+          arr[o] = base[o] + (DRY_COLOR.r - base[o]) * f;
+          arr[o + 1] = base[o + 1] + (DRY_COLOR.g - base[o + 1]) * f;
+          arr[o + 2] = base[o + 2] + (DRY_COLOR.b - base[o + 2]) * f;
+        }
+      }
+    }
+    attr.needsUpdate = true;
   }
 
   /** Höhe inkl. Bauwerk einer Zelle, Rand = sehr tief (offene Wand) */
@@ -102,6 +150,7 @@ export class TerrainRenderer {
     const y0 = chy * CHUNK;
     const x1 = Math.min(this.w, x0 + CHUNK);
     const y1 = Math.min(this.h, y0 + CHUNK);
+    const offsets = new Int32Array(CHUNK * CHUNK).fill(-1);
 
     for (let y = y0; y < y1; y++) {
       for (let x = x0; x < x1; x++) {
@@ -112,6 +161,7 @@ export class TerrainRenderer {
         if (s > 0) color.copy(DAM_TOP);
         else groundColor(g, color);
         // Deckfläche (y ist Höhe, z ist Kartenzeile)
+        offsets[(y - y0) * CHUNK + (x - x0)] = positions.length / 3;
         quad(x, top, y, x, top, y + 1, x + 1, top, y + 1, x + 1, top, y, 0, 1, 0, color);
 
         // Wände zu tieferen Nachbarn
@@ -151,5 +201,8 @@ export class TerrainRenderer {
       this.chunks[c] = mesh;
       this.group.add(mesh);
     }
+    this.topOffset[c] = offsets;
+    this.baseColors[c] = new Float32Array(colors);
+    if (this.dry) this.tintChunk(c);
   }
 }
