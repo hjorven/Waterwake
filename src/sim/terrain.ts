@@ -11,6 +11,8 @@ export interface MapData {
   sources: { index: number; rate: number }[];
   /** Zellindizes der Senken (Fluss verlässt die Karte) */
   sinks: number[];
+  /** Zelle des Startlagers (links oben), fehlt oder -1 = das Spiel sucht selbst */
+  start?: number;
 }
 
 /** Form eines Tals; die Vorgabe ergibt das Ottertal */

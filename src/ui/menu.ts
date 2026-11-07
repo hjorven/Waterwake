@@ -1,5 +1,6 @@
+import { AUTHOR_MAX, MAP_NAME_MAX, isMapCode, newMapId, normalizeCode, validateGoal, type CustomMap, type MapCore, type SharedMapInfo } from '../data/custom';
 import { DAILY_ID, dailyDateText, dailyKey } from '../data/daily';
-import { CAMPAIGN, SCENARIOS, goalText, isUnlocked, nextScenario, type Scenario } from '../data/maps';
+import { CAMPAIGN, SCENARIOS, goalText, isUnlocked, nextScenario, type Goal, type Scenario } from '../data/maps';
 import { CLOUD_SLOTS, type DailyBoard, type DailyResult } from '../online/cloud';
 import { LOCAL_SLOTS, formatSavedAt, slotLabel, type SaveEntry, type Settings } from '../online/saves';
 import type { SimStats } from '../sim/protocol';
@@ -33,6 +34,23 @@ export interface MenuCallbacks {
   dailyScore(): DailyScore | null;
   /** Wertung des laufenden Spiels abgeben */
   onDailySubmit(name: string): Promise<DailyResult>;
+  // Karteneditor
+  listMaps(): CustomMap[];
+  /** Editor mit einem Zufallstal (Seed) oder einer flachen Karte (null) öffnen */
+  onEditorNew(seed: number | null): void;
+  onEditorOpen(map: CustomMap): void;
+  onPlayMap(map: CustomMap): void;
+  onDeleteMap(id: string): void;
+  /** Gelände, Quellen, Abfluss und Start aus dem laufenden Editor holen */
+  onMapExport(): Promise<MapCore>;
+  /** Karte im Browser ablegen; false, wenn kein Platz ist */
+  onMapStore(map: CustomMap): boolean;
+  /** Karte hochladen, gibt den Code zurück */
+  onMapShare(map: CustomMap): Promise<string>;
+  onMapDownload(code: string): Promise<CustomMap>;
+  onMapList(): Promise<SharedMapInfo[]>;
+  /** die Karte, die gerade im Editor liegt */
+  editing(): CustomMap | null;
 }
 
 /** Stand des laufenden Spiels auf der Tageskarte */
@@ -45,7 +63,7 @@ export interface DailyScore {
   submitted: boolean;
 }
 
-export type MenuView = 'start' | 'menu' | 'campaign' | 'daily' | 'saves' | 'settings' | 'intro' | 'end' | null;
+export type MenuView = 'start' | 'menu' | 'campaign' | 'daily' | 'maps' | 'mapsave' | 'saves' | 'settings' | 'intro' | 'end' | null;
 
 function metaText(e: SaveEntry | undefined): string {
   if (!e) return 'leer';
@@ -86,6 +104,10 @@ export class Menu {
   private boardError = '';
   private boardBusy = false;
   private dailyBusy = false;
+  private shared: SharedMapInfo[] | null = null;
+  private sharedError = '';
+  private sharedBusy = false;
+  private mapBusy = false;
 
   constructor(parent: HTMLElement, cb: MenuCallbacks) {
     this.cb = cb;
@@ -96,6 +118,7 @@ export class Menu {
     this.toasts.className = 'toasts';
     parent.appendChild(this.toasts);
     this.root.addEventListener('click', (e) => this.onClick(e));
+    this.root.addEventListener('change', (e) => this.onChange(e));
   }
 
   get open(): boolean {
@@ -144,6 +167,7 @@ export class Menu {
       <div class="start-cards">
         <button class="start-card" data-act="campaign">${icon('trophy')}<b>Kampagne</b><small>${campaignText}</small></button>
         <button class="start-card" data-act="daily">${icon('calendar')}<b>Tageskarte</b><small>Karte vom ${dailyDateText(dailyKey())}, für alle gleich. Wertung in der Bestenliste.</small></button>
+        <button class="start-card" data-act="maps">${icon('editor')}<b>Karteneditor</b><small>Eigene Täler bauen, teilen und per Code spielen.</small></button>
         ${auto ? `<button class="start-card" data-act="continue">${icon('play')}<b>Weiterspielen</b><small>${metaText(auto)}</small></button>` : ''}
         <button class="start-card" data-act="saves">${icon('save')}<b>Spielstände</b><small>Laden aus dem Browser oder der Cloud.</small></button>
         <button class="start-card" data-act="settings">${icon('settings')}<b>Einstellungen</b><small>Miniatur-Unschärfe, Schatten.</small></button>
@@ -166,6 +190,20 @@ export class Menu {
     this.view = 'menu';
     this.back = 'menu';
     this.lastMenuStats = stats;
+    if (stats?.editor) {
+      this.dialog(
+        'Karteneditor',
+        `<p class="note">${stats.scenarioName} · ${stats.sources} ${stats.sources === 1 ? 'Quelle' : 'Quellen'} · ${stats.sinks} ${stats.sinks === 1 ? 'Abfluss' : 'Abflüsse'} · Start ${stats.startSet ? 'gesetzt' : 'automatisch'}</p>
+        <div class="menu-list">
+          <button class="btn" data-act="resume">${icon('editor')}Weiter bearbeiten</button>
+          <button class="btn secondary" data-act="mapsave">${icon('save')}Karte speichern und teilen</button>
+          <button class="btn secondary" data-act="map-test">${icon('play')}Probespiel auf dieser Karte</button>
+          <button class="btn secondary" data-act="settings">${icon('settings')}Einstellungen</button>
+          <button class="btn secondary" data-act="main">${icon('menu')}Hauptmenü</button>
+        </div>`,
+      );
+      return;
+    }
     const daily = stats && stats.scenario === DAILY_ID ? this.cb.dailyScore() : null;
     const head = stats
       ? `<p class="note">${stats.scenarioName} · Tag ${stats.season.day}, Jahr ${stats.season.year} · ${stats.population} Otter · ${daily ? `Wertung: ${daily.score} Punkte` : `Ziel: ${goalText(stats.goal)}`}</p>`
@@ -321,6 +359,203 @@ export class Menu {
     else if (this.view === 'menu') this.showMenu(this.lastMenuStats);
   }
 
+  showMaps(): void {
+    this.view = 'maps';
+    this.back = 'start';
+    const maps = this.cb.listMaps();
+    const rows = maps.map(
+      (m) => `<div class="slot">
+        <div class="slot-info"><b>${esc(m.name)}</b><small>${m.author ? `von ${esc(m.author)} · ` : ''}${goalText(m.goal)}${m.code ? ` · Code ${m.code}` : ''}</small></div>
+        <button class="btn" data-act="map-play" data-id="${esc(m.id)}">${icon('play')}Spielen</button>
+        <button class="btn secondary" data-act="map-edit" data-id="${esc(m.id)}">${icon('editor')}Bearbeiten</button>
+        <button class="btn secondary" data-act="map-delete" data-id="${esc(m.id)}" title="Löschen">${icon('close')}</button>
+      </div>`,
+    );
+    this.dialog(
+      'Karteneditor',
+      `<p class="note">Baut eigene Täler mit Quellen, Abfluss und Startlager, spielt sie Probe und teilt sie mit einem Code aus sechs Zeichen.</p>
+      <div class="section-title">${icon('editor')}Neue Karte</div>
+      <div class="daily-row">
+        <label>Zufallstal, Karte <input class="map-seed" type="number" min="1" max="999999" value="${this.seed}"></label>
+        <button class="btn" data-act="map-new-random">${icon('editor')}Tal erzeugen</button>
+        <button class="btn secondary" data-act="map-new-flat">Flache Karte</button>
+      </div>
+      <div class="section-title">${icon('save')}Meine Karten</div>
+      ${rows.length ? rows.join('') : '<p class="note">Noch keine eigene Karte. Im Editor unter Menü speichern.</p>'}
+      <div class="section-title">${icon('cloud')}Geteilte Karten</div>
+      <div class="daily-row">
+        <label>Code <input class="map-code" type="text" maxlength="6" placeholder="ABC123" autocapitalize="characters"></label>
+        <button class="btn" data-act="map-code-load" ${this.mapBusy ? 'disabled' : ''}>${icon('cloud')}Laden und spielen</button>
+      </div>
+      <div class="board"></div>
+      <div class="btn-row"><button class="btn secondary" data-act="back">Zurück</button></div>`,
+    );
+    this.loadShared();
+    this.renderShared();
+  }
+
+  private loadShared(): void {
+    if (this.shared || this.sharedBusy) return;
+    this.sharedBusy = true;
+    this.sharedError = '';
+    this.cb
+      .onMapList()
+      .then((list) => {
+        this.shared = list;
+      })
+      .catch((err: Error) => {
+        this.sharedError = err.message;
+      })
+      .finally(() => {
+        this.sharedBusy = false;
+        this.renderShared();
+      });
+  }
+
+  private renderShared(): void {
+    const el = this.root.querySelector('.board');
+    if (el && this.view === 'maps') el.innerHTML = this.sharedHtml();
+  }
+
+  private sharedHtml(): string {
+    if (this.sharedBusy) return '<p class="note">Geteilte Karten werden geladen …</p>';
+    if (this.sharedError) return `<p class="note">Geteilte Karten nicht erreichbar: ${esc(this.sharedError)}</p>`;
+    const list = this.shared;
+    if (!list) return '';
+    if (!list.length) return '<p class="note">Noch keine geteilte Karte. Deine kann die erste sein.</p>';
+    return list
+      .map(
+        (m) => `<div class="slot">
+        <div class="slot-info"><b>${esc(m.name)}</b><small>Code ${m.code}${m.author ? ` · von ${esc(m.author)}` : ''} · ${m.plays} mal gespielt · ${formatSavedAt(m.createdAt)}</small></div>
+        <button class="btn secondary" data-act="map-shared-play" data-code="${m.code}" ${this.mapBusy ? 'disabled' : ''}>${icon('play')}Spielen</button>
+      </div>`,
+      )
+      .join('');
+  }
+
+  showMapSave(): void {
+    this.view = 'mapsave';
+    const m = this.cb.editing();
+    const goal = m?.goal ?? null;
+    const kind = goal?.kind ?? 'none';
+    const clan = goal?.kind === 'clan' ? goal : { population: 16, year: 3 };
+    const see = goal?.kind === 'stausee' ? goal : { cells: 60, depth: 2, days: 2, population: 12 };
+    const link = m?.code ? `${location.origin}${location.pathname}?code=${m.code}` : '';
+    this.dialog(
+      'Karte speichern',
+      `<div class="form">
+        <label>Name <input class="map-name" type="text" maxlength="${MAP_NAME_MAX}" value="${esc(m?.name ?? '')}" placeholder="Mein Tal"></label>
+        <label>Autor <input class="map-author" type="text" maxlength="${AUTHOR_MAX}" value="${esc(m?.author || this.cb.getName())}" placeholder="Dein Name"></label>
+        <label>Ziel <select class="map-goal">
+          <option value="none" ${kind === 'none' ? 'selected' : ''}>Kein Ziel, freies Spiel</option>
+          <option value="clan" ${kind === 'clan' ? 'selected' : ''}>Clan: so viele Otter bis zu einem Jahr</option>
+          <option value="stausee" ${kind === 'stausee' ? 'selected' : ''}>Stausee: einen See so viele Tage halten</option>
+        </select></label>
+        <div class="goal-fields clan${kind === 'clan' ? '' : ' hidden'}">
+          <label>Otter <input class="g-pop" type="number" min="1" max="500" value="${clan.population}"></label>
+          <label>Jahr <input class="g-year" type="number" min="1" max="20" value="${clan.year}"></label>
+        </div>
+        <div class="goal-fields stausee${kind === 'stausee' ? '' : ' hidden'}">
+          <label>Zellen <input class="g-cells" type="number" min="1" max="5000" value="${see.cells}"></label>
+          <label>Tiefe <input class="g-depth" type="number" min="0.5" max="8" step="0.5" value="${see.depth}"></label>
+          <label>Tage <input class="g-days" type="number" min="1" max="30" value="${see.days}"></label>
+          <label>Otter <input class="g-spop" type="number" min="0" max="500" value="${see.population}"></label>
+        </div>
+      </div>
+      ${m?.code ? `<p class="note">Geteilt mit dem Code <b class="code">${m.code}</b><br>${esc(link)}</p>` : '<p class="note">Speichern legt die Karte in diesem Browser ab. Teilen lädt sie hoch und gibt einen Code, den andere eingeben können (anonymes Konto, ohne Anmeldung).</p>'}
+      <div class="btn-row">
+        <button class="btn" data-act="map-store" ${this.mapBusy ? 'disabled' : ''}>${icon('save')}Speichern</button>
+        <button class="btn secondary" data-act="map-share" ${this.mapBusy ? 'disabled' : ''}>${icon('cloud')}${m?.code ? 'Nochmal teilen' : 'Teilen'}</button>
+        <button class="btn secondary" data-act="map-test" ${this.mapBusy ? 'disabled' : ''}>${icon('play')}Probespiel</button>
+        <button class="btn secondary" data-act="editor-back">Zurück zum Editor</button>
+      </div>`,
+    );
+  }
+
+  /** Name, Autor und Ziel aus dem Formular; null bei unmöglichem Ziel */
+  private readMapForm(): { name: string; author: string; goal: Goal | null } | null {
+    const val = (cls: string) => (this.root.querySelector(cls) as HTMLInputElement | HTMLSelectElement | null)?.value ?? '';
+    const num = (cls: string) => Number(val(cls));
+    const name = val('.map-name').trim().slice(0, MAP_NAME_MAX) || 'Eigene Karte';
+    const author = val('.map-author').trim().slice(0, AUTHOR_MAX);
+    const kind = val('.map-goal');
+    const raw =
+      kind === 'clan'
+        ? { kind: 'clan', population: num('.g-pop'), year: num('.g-year') }
+        : kind === 'stausee'
+          ? { kind: 'stausee', cells: num('.g-cells'), depth: num('.g-depth'), days: num('.g-days'), population: num('.g-spop') }
+          : null;
+    const goal = validateGoal(raw);
+    if (goal === undefined) {
+      this.toast('Das Ziel passt nicht: Otter 1 bis 500, Jahr 1 bis 20, Zellen 1 bis 5000, Tiefe 0,5 bis 8, Tage 1 bis 30.', true);
+      return null;
+    }
+    return { name, author, goal };
+  }
+
+  /** Karte aus dem Editor holen und im Browser ablegen */
+  private async storeMap(): Promise<CustomMap | null> {
+    const form = this.readMapForm();
+    if (!form) return null;
+    const core = await this.cb.onMapExport();
+    const prev = this.cb.editing();
+    const map: CustomMap = { id: prev?.id ?? newMapId(), name: form.name, author: form.author, goal: form.goal, createdAt: Date.now(), ...core };
+    if (prev?.code) map.code = prev.code;
+    if (form.author && !this.cb.getName()) this.cb.setName(form.author);
+    if (!this.cb.onMapStore(map)) {
+      this.toast('Kein Platz mehr: höchstens 24 Karten im Browser. Bitte eine löschen.', true);
+      return null;
+    }
+    return map;
+  }
+
+  /** Knöpfe sperren, solange eine Kartenaktion läuft; `run` sagt, ob die Ansicht danach neu gezeichnet werden soll */
+  private mapAction(run: () => Promise<boolean>): void {
+    if (this.mapBusy) return;
+    this.mapBusy = true;
+    this.setMapButtons(false);
+    run()
+      .then((changed) => {
+        this.mapBusy = false;
+        if (changed) this.refreshMaps();
+        else this.setMapButtons(true);
+      })
+      .catch((err: Error) => {
+        this.mapBusy = false;
+        this.setMapButtons(true);
+        this.toast(`Karte: ${err.message}`, true);
+      });
+  }
+
+  private setMapButtons(on: boolean): void {
+    for (const b of this.root.querySelectorAll<HTMLButtonElement>('button[data-act^="map-"]')) b.disabled = !on;
+  }
+
+  private refreshMaps(): void {
+    if (this.view === 'maps') this.showMaps();
+    else if (this.view === 'mapsave') this.showMapSave();
+  }
+
+  private playCode(raw: string): void {
+    const code = normalizeCode(raw);
+    if (!isMapCode(code)) {
+      this.toast('Ein Code hat sechs Zeichen, zum Beispiel ABC123.', true);
+      return;
+    }
+    this.mapAction(async () => {
+      const map = await this.cb.onMapDownload(code);
+      this.cb.onPlayMap(map);
+      return false;
+    });
+  }
+
+  private onChange(e: Event): void {
+    const sel = (e.target as HTMLElement).closest('.map-goal') as HTMLSelectElement | null;
+    if (!sel) return;
+    this.root.querySelector('.goal-fields.clan')?.classList.toggle('hidden', sel.value !== 'clan');
+    this.root.querySelector('.goal-fields.stausee')?.classList.toggle('hidden', sel.value !== 'stausee');
+  }
+
   showSaves(): void {
     this.view = 'saves';
     const local = this.cb.listLocal();
@@ -452,7 +687,79 @@ export class Menu {
       case 'back':
         this.saveNameInput();
         if (this.back === 'start') this.showStart();
-        else this.showMenu(null);
+        else this.showMenu(this.lastMenuStats);
+        break;
+      case 'maps':
+        this.shared = null;
+        this.showMaps();
+        break;
+      case 'map-new-random': {
+        const seedEl = this.root.querySelector('.map-seed') as HTMLInputElement | null;
+        const seed = Math.max(1, Math.floor(Number(seedEl?.value) || 1));
+        this.seed = seed;
+        this.cb.onEditorNew(seed);
+        break;
+      }
+      case 'map-new-flat':
+        this.cb.onEditorNew(null);
+        break;
+      case 'map-play':
+      case 'map-edit':
+      case 'map-delete': {
+        const map = this.cb.listMaps().find((m) => m.id === btn.dataset.id);
+        if (!map) break;
+        if (act === 'map-play') this.cb.onPlayMap(map);
+        else if (act === 'map-edit') this.cb.onEditorOpen(map);
+        else {
+          this.cb.onDeleteMap(map.id);
+          this.showMaps();
+        }
+        break;
+      }
+      case 'map-code-load':
+        this.playCode((this.root.querySelector('.map-code') as HTMLInputElement | null)?.value ?? '');
+        break;
+      case 'map-shared-play':
+        this.playCode(btn.dataset.code ?? '');
+        break;
+      case 'mapsave':
+        this.showMapSave();
+        break;
+      case 'editor-back':
+        this.hide();
+        this.cb.onResume();
+        break;
+      case 'map-store':
+        this.mapAction(async () => {
+          const map = await this.storeMap();
+          if (map) this.toast(`Karte "${map.name}" gespeichert.`);
+          return !!map;
+        });
+        break;
+      case 'map-share':
+        this.mapAction(async () => {
+          const map = await this.storeMap();
+          if (!map) return false;
+          const code = await this.cb.onMapShare(map);
+          this.toast(`Geteilt. Der Code ist ${code}.`);
+          return true;
+        });
+        break;
+      case 'map-test':
+        // Probespiel: den Stand aus dem Editor holen und ablegen, damit die Änderungen den Test überdauern
+        this.mapAction(async () => {
+          let map: CustomMap | null = null;
+          if (this.view === 'mapsave') map = await this.storeMap();
+          else {
+            const prev = this.cb.editing();
+            if (prev) {
+              map = { ...prev, ...(await this.cb.onMapExport()) };
+              if (!this.cb.onMapStore(map)) this.toast('Die Karte konnte nicht abgelegt werden: höchstens 24 Karten im Browser.', true);
+            }
+          }
+          if (map) this.cb.onPlayMap(map);
+          return false;
+        });
         break;
       case 'campaign':
         this.showCampaign();

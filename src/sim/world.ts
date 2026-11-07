@@ -2,18 +2,19 @@ import { BUILDINGS, DAM_WOOD_PER_LEVEL, FLOOD_DESTROY_TIME, FLOOD_REPAIR_TIME, G
 import { GOOD_LABEL, GOODS, type Stock } from '../data/goods';
 import { freeScenario, type Goal, type Scenario } from '../data/maps';
 import { TECH_FOR, TECH_ORDER, TECHS, type TechId } from '../data/tech';
-import { Buildings, type Building } from './buildings';
+import { Buildings, type Building, type PlacementContext } from './buildings';
 import { Citizens, type Env } from './citizens';
 import { Pathfinder } from './pathfinding';
 import { RAFT_DEPTH, Rafts } from './rafts';
 import { mulberry32, type Rng } from './rng';
 import { DAY, Seasons, type SeasonInfo } from './seasons';
 import { generateValley, MAX_HEIGHT, type MapData } from './terrain';
+import { EDITOR_SOURCE_RATE, mapToData } from '../data/custom';
 import { Vegetation } from './vegetation';
 import { WaterSim } from './water';
 
 export type Weather = 'normal' | 'schmelze' | 'duerre' | 'schlamm';
-export type Tool = 'anheben' | 'absenken' | 'damm' | 'deich' | 'schleuse' | 'abreissen';
+export type Tool = 'anheben' | 'absenken' | 'damm' | 'deich' | 'schleuse' | 'abreissen' | 'quelle' | 'senke' | 'start';
 export type Outcome = 'won' | 'lost' | null;
 
 export const WEATHER_INFO: Record<Weather, { sourceFactor: number; evaporation: number; pollution: number; label: string }> = {
@@ -98,6 +99,11 @@ export interface WorldStats {
   scenario: string;
   scenarioName: string;
   seed: number;
+  /** Karteneditor läuft: keine Bewohner, Werkzeuge für Quellen, Abfluss und Start */
+  editor: boolean;
+  sources: number;
+  sinks: number;
+  startSet: boolean;
 }
 
 function plants(n: number, what: string): string {
@@ -138,6 +144,10 @@ export class World implements Env {
   autoSeasons = true;
   /** Baukasten: Wasserbau kostet kein Holz */
   freeBuild = false;
+  /** Karteneditor: keine Bewohner, kein Untergang, Werkzeuge für Quellen, Abfluss und Start */
+  editor = false;
+  /** Zelle des Startlagers (links oben), -1 = beste Stelle am Fluss suchen */
+  start = -1;
   /** vergangene Simulationszeit in Sekunden */
   time = 0;
   /** Version des Geländes, steigt bei jeder Änderung */
@@ -169,6 +179,7 @@ export class World implements Env {
     this.h = map.h;
     this.seed = seed;
     this.scenario = scenario ?? freeScenario(seed, map.w, map.h);
+    this.start = map.start ?? -1;
     this.rnd = mulberry32(seed ^ 0x51ed);
     this.ground = map.ground.slice();
     this.struct = new Uint8Array(map.w * map.h);
@@ -203,17 +214,18 @@ export class World implements Env {
   }
 
   static fromScenario(s: Scenario): World {
-    return World.generate(s.w, s.h, s.seed, s);
+    return s.custom ? new World(mapToData(s.custom), s.seed, s) : World.generate(s.w, s.h, s.seed, s);
   }
 
   /**
    * Fluss einlaufen lassen, Pflanzen setzen, Startlager und Otter.
    * Wird vom Worker nach dem Erzeugen aufgerufen.
    */
-  settle(): void {
+  /** Wasser einschwingen lassen, Pflanzen setzen und, wenn gewünscht, den Clan mit Lager absetzen */
+  settle(withClan = true): void {
     for (let i = 0; i < 1600; i++) this.water.step(SIM_DT);
     this.veg.updateMoisture(this.water.depth);
-    const start = this.findStart();
+    const start = withClan ? this.chooseStart() : -1;
     const blocked = new Set<number>();
     if (start >= 0) {
       const sx = start % this.w;
@@ -236,7 +248,17 @@ export class World implements Env {
     this.time = 0;
     this.water.added = this.water.drained = this.water.evaporated = 0;
     this.messages.length = 0;
-    this.log('Der Otterclan kommt am Fluss an. Baut eine Pumpe und Hütten, bevor die Dürre kommt.');
+    if (withClan) this.log('Der Otterclan kommt am Fluss an. Baut eine Pumpe und Hütten, bevor die Dürre kommt.');
+  }
+
+  /** Gesetzter Start der Karte, wenn dort ein Lager passt, sonst die beste Stelle am Fluss */
+  private chooseStart(): number {
+    if (this.start >= 0 && !this.buildings.canPlace('lager', this.start % this.w, (this.start / this.w) | 0, this.placementContext())) return this.start;
+    return this.findStart();
+  }
+
+  private placementContext(): PlacementContext {
+    return { ground: this.ground, struct: this.struct, depth: this.water.depth, sink: this.water.sink };
   }
 
   /** Flache, trockene, feuchte 2x2-Stelle möglichst nah an der Kartenmitte */
@@ -668,6 +690,7 @@ export class World implements Env {
 
   /** Spielziel und Untergang prüfen */
   private checkOutcome(): void {
+    if (this.editor) return;
     const pop = this.citizens.count();
     if (pop === 0) {
       if (this.outcome !== 'lost') {
@@ -740,6 +763,10 @@ export class World implements Env {
       seed: this.seed,
       scenario: this.scenario.id,
       scenarioName: this.scenario.name,
+      editor: this.editor,
+      sources: this.water.sources.length,
+      sinks: this.sinkCount(),
+      startSet: this.start >= 0,
     };
   }
 
@@ -828,6 +855,30 @@ export class World implements Env {
         this.setStruct(i, target);
         return true;
       }
+      case 'quelle': {
+        if (!this.editor) return false;
+        const k = this.water.sources.findIndex((src) => src.index === i);
+        if (k >= 0) this.water.sources.splice(k, 1);
+        else this.water.sources.push({ index: i, rate: EDITOR_SOURCE_RATE });
+        this.terrainVersion++;
+        return true;
+      }
+      case 'senke':
+        if (!this.editor) return false;
+        this.water.sink[i] = this.water.sink[i] ? 0 : 1;
+        this.terrainVersion++;
+        return true;
+      case 'start': {
+        if (!this.editor) return false;
+        const why = this.buildings.canPlace('lager', i % this.w, (i / this.w) | 0, this.placementContext());
+        if (why) {
+          this.log(`Hier passt kein Lager hin: ${why}.`);
+          return false;
+        }
+        this.start = i;
+        this.terrainVersion++;
+        return true;
+      }
       case 'abreissen':
         if (s === 0 && this.gate[i] === 0) return false;
         this.gate[i] = 0;
@@ -835,6 +886,13 @@ export class World implements Env {
         this.setStruct(i, 0);
         return true;
     }
+  }
+
+  private sinkCount(): number {
+    let n = 0;
+    const s = this.water.sink;
+    for (let i = 0; i < s.length; i++) n += s[i];
+    return n;
   }
 
   /** Schleusentor öffnen oder schließen */

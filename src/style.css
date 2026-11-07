@@ -1120,3 +1120,69 @@ button.start-card:hover {
   background: var(--paper-2);
   border-radius: 6px;
 }
+
+/* Karteneditor */
+
+#hud.editor .res {
+  display: none;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.form label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.form input[type='text'],
+.form select {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 5px 7px;
+  border: 1px solid var(--wood-2);
+  border-radius: 6px;
+  background: white;
+}
+
+.form input[type='number'],
+.daily-row input[type='number'] {
+  width: 84px;
+  font: inherit;
+  padding: 4px 6px;
+  border: 1px solid var(--wood-2);
+  border-radius: 6px;
+  background: white;
+}
+
+.goal-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.goal-fields label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.daily-row .map-code {
+  width: 110px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.code {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 20px;
+  letter-spacing: 0.2em;
+}

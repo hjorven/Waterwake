@@ -1,3 +1,4 @@
+import { MAX_MAPS, validateMap, type CustomMap } from '../data/custom';
 import type { SaveGame, SaveMeta } from '../sim/save';
 
 /** Lokale Spielstände im Browser (localStorage) */
@@ -159,4 +160,52 @@ export function saveName(name: string): void {
   } catch {
     // voll oder gesperrt: dann eben nicht
   }
+}
+
+const MAPS_KEY = 'waterwake.maps';
+
+/** Eigene und heruntergeladene Karten im Browser, neueste zuerst */
+export function loadMaps(): CustomMap[] {
+  const s = storage();
+  if (!s) return [];
+  try {
+    const raw = s.getItem(MAPS_KEY);
+    const list = raw ? (JSON.parse(raw) as unknown) : [];
+    if (!Array.isArray(list)) return [];
+    const out: CustomMap[] = [];
+    for (const m of list) {
+      const v = validateMap(m);
+      if (v) out.push(v);
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+function writeMaps(list: CustomMap[]): boolean {
+  const s = storage();
+  if (!s) return false;
+  try {
+    s.setItem(MAPS_KEY, JSON.stringify(list));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Karte anlegen oder die mit derselben Kennung ersetzen; false, wenn kein Platz ist */
+export function upsertMap(map: CustomMap): boolean {
+  const list = loadMaps();
+  const k = list.findIndex((m) => m.id === map.id);
+  if (k >= 0) list[k] = map;
+  else {
+    if (list.length >= MAX_MAPS) return false;
+    list.unshift(map);
+  }
+  return writeMaps(list);
+}
+
+export function deleteMap(id: string): void {
+  writeMaps(loadMaps().filter((m) => m.id !== id));
 }
