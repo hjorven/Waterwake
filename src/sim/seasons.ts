@@ -127,15 +127,16 @@ export class Seasons {
     return 3 + peak * Math.sin(Math.PI * p);
   }
 
-  info(): SeasonInfo {
+  /** Stand des Jahreslaufs; mit `exact` (Sternwarte) ist die Dauer der nächsten Phase genau bekannt */
+  info(exact = false): SeasonInfo {
     return {
       phase: this.phase,
       year: this.year,
       day: Math.floor(this.time / DAY) + 1,
       daysLeft: Math.max(0, Math.ceil((this.phaseEnd - this.time) / DAY)),
       next: this.next,
-      nextMin: this.nextMin,
-      nextMax: this.nextMax,
+      nextMin: exact ? this.nextLength : this.nextMin,
+      nextMax: exact ? this.nextLength : this.nextMax,
     };
   }
 

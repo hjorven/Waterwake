@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DAY } from './seasons';
-import { restoreWorld, serializeWorld } from './save';
+import { restoreWorld, SAVE_VERSION, serializeWorld } from './save';
 import { World } from './world';
 
 function runDays(world: World, days: number): void {
@@ -61,7 +61,7 @@ describe('Spielstand mit Schlamm', () => {
     c.health = 0.2;
     c.sick = true;
     const { data } = serializeWorld(world);
-    expect(data.v).toBe(2);
+    expect(data.v).toBe(SAVE_VERSION);
     const back = restoreWorld(JSON.parse(JSON.stringify(data)));
     expect(back.water.maxPollution()).toBeCloseTo(world.water.maxPollution(), 5);
     expect(back.store.pollution).toBeCloseTo(0.4, 5);
@@ -108,5 +108,61 @@ describe('Spielstand mit Jungen', () => {
     expect(back.citizens.list.map((c) => c.mood)).toEqual(world.citizens.list.map((c) => c.mood));
     runDays(back, 1);
     expect(back.citizens.children()).toBe(1);
+  });
+});
+
+describe('Spielstand mit Forschung', () => {
+  it('behält Wissen, Technologien und gelieferte Baustoffe', () => {
+    const world = World.generate(96, 96, 7);
+    world.settle();
+    world.knowledge = 12.5;
+    world.techs.add('zimmerei');
+    world.techs.add('pfahlbau');
+    const lager = [...world.buildings.alive()][0];
+    const site = world.place('pfahlhaus', lager.x - 3, lager.y)!;
+    site.delivered.holz = 4;
+    site.delivered.bretter = 2;
+    site.growth = 0.3;
+    lager.stock.brot = 5;
+    const { data } = serializeWorld(world);
+    const back = restoreWorld(JSON.parse(JSON.stringify(data)));
+    expect(back.knowledge).toBeCloseTo(12.5, 5);
+    expect([...back.techs]).toEqual(['zimmerei', 'pfahlbau']);
+    const s2 = back.buildings.get(site.id)!;
+    expect(s2.delivered.holz).toBe(4);
+    expect(s2.delivered.bretter).toBe(2);
+    expect(s2.reserved.holz).toBe(0);
+    expect(s2.growth).toBeCloseTo(0.3, 5);
+    expect(back.buildings.get(lager.id)!.stock.brot).toBe(5);
+    expect(back.isUnlocked('pfahlhaus')).toBe(true);
+    expect(back.isUnlocked('wasserrad')).toBe(false);
+  });
+
+  it('lädt Spielstände der Version 2 mit geliefertem Holz und zwei Waren', () => {
+    const world = World.generate(64, 64, 3);
+    world.settle();
+    const lager = [...world.buildings.alive()][0];
+    const site = world.place('huette', lager.x - 3, lager.y)!;
+    site.delivered.holz = 5;
+    const { data } = serializeWorld(world);
+    const old = JSON.parse(JSON.stringify(data));
+    old.v = 2;
+    delete old.knowledge;
+    delete old.techs;
+    for (const b of old.buildings) {
+      b.woodDelivered = b.delivered.holz;
+      delete b.delivered;
+      delete b.reserved;
+      delete b.growth;
+      b.stock = { holz: b.stock.holz, beeren: b.stock.beeren };
+    }
+    const back = restoreWorld(old);
+    expect(back.knowledge).toBe(0);
+    expect(back.techs.size).toBe(0);
+    const s2 = back.buildings.get(site.id)!;
+    expect(s2.delivered.holz).toBe(5);
+    expect(s2.delivered.bretter).toBe(0);
+    expect(back.buildings.get(lager.id)!.stock.fisch).toBe(0);
+    runDays(back, 1);
   });
 });

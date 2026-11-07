@@ -1,11 +1,12 @@
 import { freeScenario, scenarioById } from '../data/maps';
-import type { Building } from './buildings';
+import type { TechId } from '../data/tech';
+import type { SavedBuilding } from './buildings';
 import type { CitizensSave } from './citizens';
 import type { SeasonsSave } from './seasons';
 import type { Source } from './water';
 import { World, type Outcome, type Weather } from './world';
 
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 
 /** Kompletter Spielstand, Raster als Base64 */
 export interface SaveGame {
@@ -21,6 +22,9 @@ export interface SaveGame {
   store: number;
   /** Verschmutzung des Speichers (ab Version 2) */
   storePollution?: number;
+  /** Wissen und erforschte Technologien (ab Version 3) */
+  knowledge?: number;
+  techs?: TechId[];
   outcome: Outcome;
   lostToFlood: number;
   ground: string;
@@ -33,7 +37,7 @@ export interface SaveGame {
   /** Verschmutzung je Zelle (ab Version 2) */
   pollution?: string;
   veg: { trees: string; bushes: string; dry: string; growth: string; stress: string; drown: string; poison?: string };
-  buildings: Building[];
+  buildings: SavedBuilding[];
   citizens: CitizensSave;
   seasons: SeasonsSave;
   rng: number;
@@ -90,6 +94,8 @@ export function serializeWorld(world: World, name = ''): { data: SaveGame; meta:
     freeBuild: world.freeBuild,
     store: world.store.stored,
     storePollution: world.store.pollution,
+    knowledge: world.knowledge,
+    techs: [...world.techs],
     outcome: world.outcome,
     lostToFlood: world.lostToFlood,
     ground: encodeBytes(world.ground),
@@ -109,7 +115,14 @@ export function serializeWorld(world: World, name = ''): { data: SaveGame; meta:
       drown: encodeFloats(world.veg.drown),
       poison: encodeFloats(world.veg.poison),
     },
-    buildings: world.buildings.list.map((b) => ({ ...b, workers: [...b.workers], residents: [...b.residents], stock: { ...b.stock } })),
+    buildings: world.buildings.list.map((b) => ({
+      ...b,
+      workers: [...b.workers],
+      residents: [...b.residents],
+      stock: { ...b.stock },
+      delivered: { ...b.delivered },
+      reserved: { ...b.reserved },
+    })),
     citizens: world.citizens.save(),
     seasons: world.seasons.save(),
     rng: world.rnd.state,
@@ -158,6 +171,8 @@ export function restoreWorld(s: SaveGame): World {
   world.freeBuild = s.freeBuild;
   world.store.stored = s.store;
   world.store.pollution = s.storePollution ?? 0;
+  world.knowledge = s.knowledge ?? 0;
+  for (const t of s.techs ?? []) world.techs.add(t);
   world.outcome = s.outcome;
   world.lostToFlood = s.lostToFlood;
   world.setWeather(s.weather);

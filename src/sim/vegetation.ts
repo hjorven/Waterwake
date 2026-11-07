@@ -265,6 +265,18 @@ export class Vegetation {
     return true;
   }
 
+  /** Beerenstrauch pflanzen (Beerengärtner) */
+  plantBush(i: number): boolean {
+    if (this.trees[i] || this.bushes[i]) return false;
+    this.bushes[i] = 1;
+    this.growth[i] = 0;
+    this.stress[i] = 0;
+    this.drown[i] = 0;
+    this.poison[i] = 0;
+    this.version++;
+    return true;
+  }
+
   /** Baum fällen, gibt Holz zurück (0 wenn kein ausgewachsener Baum) */
   cutTree(i: number): number {
     if (this.trees[i] < TREE_GROWN) return 0;

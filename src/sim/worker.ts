@@ -66,9 +66,10 @@ function sendBuildings(): void {
       progress: b.progress,
       workers: b.workers.length,
       residents: b.residents.length,
-      wood: b.stock.holz,
-      berries: b.stock.beeren,
-      woodDelivered: b.woodDelivered,
+      stock: { ...b.stock },
+      delivered: world.buildings.deliveredShare(b),
+      deliveredGoods: { ...b.delivered },
+      growth: b.growth,
       flooded: b.flooded,
       damage: b.damage,
       power: b.def === 'wasserrad' ? world.wheelPower(b) : b.def === 'laufrad' ? (world.citizens.workingAt(b.id, 'tread') ? BUILDINGS.laufrad.powerGen : 0) : world.power.ratio,
@@ -134,7 +135,8 @@ function tick(): void {
   }
 
   if (world.terrainVersion !== sentTerrain) sendTerrain();
-  if (world.buildings.version !== sentBuildings || (world.stats().hasPower && now - buildingsSentAt > 1000)) sendBuildings();
+  // Strom, Reife und Vorräte ändern sich laufend: einmal je Sekunde frisch schicken
+  if (world.buildings.version !== sentBuildings || now - buildingsSentAt > 1000) sendBuildings();
   if ((world.veg.version !== sentVeg || world.veg.soilVersion !== sentSoil) && now - vegSentAt > 400) sendVeg();
 
   const n = world.w * world.h;
@@ -207,6 +209,7 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
       const scenario = msg.scenario === 'frei' ? freeScenario(msg.seed, msg.w, msg.h) : scenarioById(msg.scenario, msg.seed);
       const w = World.fromScenario(scenario);
       w.freeBuild = !!msg.freeBuild;
+      if (msg.unlockAll) w.unlockAll();
       w.settle();
       useWorld(w, false);
       break;
@@ -236,6 +239,12 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
       break;
     case 'demolish':
       world?.demolish(msg.cell);
+      break;
+    case 'research':
+      world?.research(msg.tech);
+      break;
+    case 'unlock':
+      world?.unlockAll();
       break;
   }
 };

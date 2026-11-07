@@ -1,6 +1,7 @@
 import { BUILDINGS, type BuildingDef, type BuildingId } from '../data/buildings';
+import { costTotal, emptyStock, fillStock, FOODS, GOODS, type Good, type Stock } from '../data/goods';
 
-export type Good = 'holz' | 'beeren';
+export type { Good } from '../data/goods';
 
 export interface Building {
   id: number;
@@ -13,21 +14,34 @@ export interface Building {
   built: boolean;
   /** Baufortschritt 0..1 */
   progress: number;
-  /** geliefertes Holz */
-  woodDelivered: number;
-  /** Holz, das gerade unterwegs ist */
-  woodReserved: number;
+  /** gelieferte Baustoffe je Ware */
+  delivered: Stock;
+  /** Baustoffe, die gerade unterwegs sind */
+  reserved: Stock;
+  /** Reife einer Ernte 0..1 (Feld, Kräutergarten) */
+  growth: number;
   /** Bewohner-Ids mit Arbeitsplatz hier */
   workers: number[];
   /** Bewohner-Ids, die hier wohnen */
   residents: number[];
   /** Vorrat (nur Lager) */
-  stock: Record<Good, number>;
+  stock: Stock;
   /** Hochwasserschaden 0..1, bei 1 ist das Gebäude verloren */
   damage: number;
   /** steht gerade im Hochwasser */
   flooded: boolean;
 }
+
+/** Gebäude im Spielstand: ältere Versionen haben nur geliefertes Holz und weniger Waren */
+export type SavedBuilding = Omit<Building, 'delivered' | 'reserved' | 'growth' | 'stock' | 'damage' | 'flooded'> & {
+  delivered?: Partial<Stock>;
+  reserved?: Partial<Stock>;
+  woodDelivered?: number;
+  growth?: number;
+  stock: Partial<Stock>;
+  damage?: number;
+  flooded?: boolean;
+};
 
 export interface PlacementContext {
   ground: Uint8Array;
@@ -189,11 +203,12 @@ export class Buildings {
       alive: true,
       built: prebuilt,
       progress: prebuilt ? 1 : 0,
-      woodDelivered: prebuilt ? def.wood : 0,
-      woodReserved: 0,
+      delivered: prebuilt ? fillStock(def.cost) : emptyStock(),
+      reserved: emptyStock(),
+      growth: 0,
       workers: [],
       residents: [],
-      stock: { holz: 0, beeren: 0 },
+      stock: emptyStock(),
       damage: 0,
       flooded: false,
     };
@@ -204,17 +219,22 @@ export class Buildings {
   }
 
   /** Gespeicherte Gebäudeliste übernehmen (Spielstand laden) */
-  restore(list: Building[]): void {
+  restore(list: SavedBuilding[]): void {
     this.list.length = 0;
     this.occ.fill(-1);
     for (const src of list) {
+      // Spielstände vor Version 3 kennen nur geliefertes Holz
+      const delivered = src.delivered ? fillStock(src.delivered) : emptyStock();
+      if (!src.delivered && src.woodDelivered) delivered.holz = src.woodDelivered;
       const b: Building = {
         ...src,
         workers: [...src.workers],
         residents: [...src.residents],
-        stock: { holz: src.stock.holz ?? 0, beeren: src.stock.beeren ?? 0 },
+        stock: fillStock(src.stock),
+        delivered,
         // Lieferungen unterwegs gehen beim Laden verloren
-        woodReserved: 0,
+        reserved: emptyStock(),
+        growth: src.growth ?? 0,
         damage: src.damage ?? 0,
         flooded: src.flooded ?? false,
       };
@@ -247,17 +267,53 @@ export class Buildings {
     return b;
   }
 
-  /** Holz, das eine Baustelle noch braucht (abzüglich Lieferungen unterwegs) */
-  woodNeeded(b: Building): number {
-    return Math.max(0, this.def(b).wood - b.woodDelivered - b.woodReserved);
+  /** Menge einer Ware, die eine Baustelle noch braucht (abzüglich Lieferungen unterwegs) */
+  needed(b: Building, good: Good): number {
+    return Math.max(0, (this.def(b).cost[good] ?? 0) - b.delivered[good] - b.reserved[good]);
+  }
+
+  /** Waren, die eine Baustelle noch braucht */
+  missing(b: Building): Good[] {
+    return GOODS.filter((g) => this.needed(b, g) > 0);
+  }
+
+  /** Alle Baustoffe sind da, es kann gebaut werden */
+  fullyDelivered(b: Building): boolean {
+    const cost = this.def(b).cost;
+    for (const g of GOODS) if (b.delivered[g] < (cost[g] ?? 0)) return false;
+    return true;
+  }
+
+  /** Anteil der gelieferten Baustoffe 0..1 (für Baustellen-Darstellung) */
+  deliveredShare(b: Building): number {
+    const total = costTotal(this.def(b).cost);
+    if (total <= 0) return 1;
+    let sum = 0;
+    for (const g of GOODS) sum += Math.min(b.delivered[g], this.def(b).cost[g] ?? 0);
+    return sum / total;
   }
 
   /** Lager mit mindestens `min` einer Ware, nächstgelegen zu (x, y) */
   storageWith(good: Good, min: number, x: number, y: number): Building | null {
+    return this.storageWhere((b) => b.stock[good] >= min, x, y);
+  }
+
+  /** Lager mit irgendeiner Nahrung, nächstgelegen zu (x, y) */
+  storageWithFood(x: number, y: number): Building | null {
+    return this.storageWhere((b) => FOODS.some((g) => b.stock[g] >= 1), x, y);
+  }
+
+  /** Beste vorhandene Nahrung in einem Lager (Brot vor Fisch vor Beeren) */
+  bestFood(b: Building): Good | null {
+    for (const g of FOODS) if (b.stock[g] >= 1) return g;
+    return null;
+  }
+
+  private storageWhere(ok: (b: Building) => boolean, x: number, y: number): Building | null {
     let best: Building | null = null;
     let bestD = Infinity;
     for (const b of this.alive()) {
-      if (b.def !== 'lager' || !b.built || b.stock[good] < min) continue;
+      if (b.def !== 'lager' || !b.built || !ok(b)) continue;
       const c = this.center(b);
       const d = Math.abs(c.x - x) + Math.abs(c.y - y);
       if (d < bestD) {
@@ -307,6 +363,27 @@ export class Buildings {
     return s;
   }
 
+  /** Nahrung aller Art in den Lagern */
+  foodTotal(): number {
+    let s = 0;
+    for (const g of FOODS) s += this.total(g);
+    return s;
+  }
+
+  /** Wie viele verschiedene Nahrungsarten vorrätig sind */
+  foodKinds(): number {
+    let n = 0;
+    for (const g of FOODS) if (this.total(g) >= 1) n++;
+    return n;
+  }
+
+  /** Vorrat aller Waren zusammen */
+  totals(): Stock {
+    const s = emptyStock();
+    for (const b of this.alive()) for (const g of GOODS) s[g] += b.stock[g];
+    return s;
+  }
+
   storageCapacity(): number {
     let s = 0;
     for (const b of this.alive()) if (b.def === 'lager' && b.built) s += this.def(b).storage;
@@ -325,14 +402,14 @@ export class Buildings {
     return s;
   }
 
-  /** Nimmt Holz aus Lagern (nächste zuerst), gibt die tatsächlich entnommene Menge zurück */
-  takeWood(amount: number, x: number, y: number): number {
+  /** Nimmt eine Ware aus Lagern (nächste zuerst), gibt die tatsächlich entnommene Menge zurück */
+  takeGood(good: Good, amount: number, x: number, y: number): number {
     let left = amount;
-    while (left > 0) {
-      const l = this.storageWith('holz', 1, x, y);
+    while (left > 1e-9) {
+      const l = this.storageWhere((b) => b.stock[good] > 1e-9, x, y);
       if (!l) break;
-      const t = Math.min(left, l.stock.holz);
-      l.stock.holz -= t;
+      const t = Math.min(left, l.stock[good]);
+      l.stock[good] -= t;
       left -= t;
     }
     return amount - left;

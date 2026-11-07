@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import './style.css';
 import { BUILDINGS, type BuildingId } from './data/buildings';
+import { costText } from './data/goods';
 import { freeScenario, OTTERTAL, scenarioById } from './data/maps';
+import { TECH_FOR, TECHS, type TechId } from './data/tech';
 import { cloudConnect, cloudDelete, cloudDownload, cloudList, cloudUpload } from './online/cloud';
 import {
   deleteLocalSave,
@@ -238,7 +240,7 @@ function startGame(scenario: string, seed: number, freeBuild: boolean): void {
   const sc = scenario === 'frei' ? freeScenario(seed) : scenarioById(scenario, seed);
   pendingIntro = sc.id;
   running = false;
-  send({ type: 'init', scenario: sc.id, seed: sc.seed, w: sc.w, h: sc.h, freeBuild });
+  send({ type: 'init', scenario: sc.id, seed: sc.seed, w: sc.w, h: sc.h, freeBuild, unlockAll: freeBuild || params.has('alles') });
   speed = 1;
 }
 
@@ -345,6 +347,7 @@ const hud = new Hud(app, {
     const b = buildings.find((x) => x.id === id);
     if (b) send({ type: 'demolish', cell: b.y * MAP_W + b.x });
   },
+  onResearch: (tech) => send({ type: 'research', tech }),
   onMenu: () => openMenu(),
 });
 let mode: Mode = hud.mode;
@@ -419,6 +422,8 @@ function markOccupied(id: BuildingId, x: number, y: number): void {
 }
 
 function placementError(id: BuildingId, x: number, y: number): string | null {
+  const tech = TECH_FOR[id];
+  if (tech && stats && !stats.techs.includes(tech)) return `zuerst ${TECHS[tech].name} erforschen`;
   return canPlaceAt(id, x, y, MAP_W, MAP_H, occ, { ground, struct, depth, sink });
 }
 
@@ -442,7 +447,7 @@ function updatePreview(): void {
     footprint.scale.set(size, size, 1);
     (footprint.material as THREE.MeshBasicMaterial).color.setHex(err ? 0xff4040 : 0x66ff66);
     footprint.visible = true;
-    hud.setHint(err ? `Hier nicht möglich: ${err}.` : `${BUILDINGS[id].name} setzen (${BUILDINGS[id].wood} Holz).`, !!err);
+    hud.setHint(err ? `Hier nicht möglich: ${err}.` : `${BUILDINGS[id].name} setzen (${costText(BUILDINGS[id].cost)}).`, !!err);
   } else if (mode.kind === 'tool') {
     const x = hoverCell % MAP_W;
     const y = (hoverCell / MAP_W) | 0;
@@ -603,6 +608,8 @@ if (params.has('karte') || params.has('seed') || params.has('frei')) {
   placementError,
   edit: (tool: Tool, cells: number[], h = 3) => send({ type: 'edit', tool, cells, damHeight: h }),
   setWeather: (w: Weather) => send({ type: 'weather', weather: w }),
+  research: (tech: TechId) => send({ type: 'research', tech }),
+  unlockAll: () => send({ type: 'unlock' }),
   setSpeed: (s: number) => setSpeed(s),
   newGame: (scenario: string, seed: number, free = false) => startGame(scenario, seed, free),
   save: (slot: string) => send({ type: 'save', slot, name: saveName() }),

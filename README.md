@@ -28,6 +28,14 @@ Spielen: https://hjorven.github.io/Waterwake/
   krank (Heilerhütte, Sandfilter). Wasserräder erzeugen Strom aus der Strömung,
   Laufräder als Notstrom, Pumpwerk und Sandfilter verbrauchen ihn. Brunnen und
   Zisterne für lange Dürren. Baumenü mit Reitern Siedlung, Versorgung, Strom.
+- **M4, Teil 2: Wissen und Technologiebaum**: Bibliothek, Schule und Sternwarte
+  sammeln Wissen, mit dem 14 Techniken erforscht werden (Reiter Forschung). Sie
+  schalten 25 der 34 Gebäude frei. Neue Waren: Bretter aus dem Sägewerk für
+  Pfahlhaus, Langhaus, Aussichtsturm und mehr, Fisch (Fischerhütte, Fischteich),
+  Korn und Brot (Feld, Bäckerei), Kräuter für die Heilerhütte, Werkzeug aus der
+  Werkstatt. Abwechslung beim Essen und Freude-Gebäude (Lagerfeuer, Statue,
+  Spielplatz, Beerenschenke, Aussichtsturm) machen den Clan zufriedener, der
+  Beerengärtner pflanzt Sträucher, die Sternwarte sagt Jahreszeiten genau voraus.
 
 ## Steuerung
 
@@ -43,7 +51,8 @@ Spielen: https://hjorven.github.io/Waterwake/
 
 URL-Parameter: `?karte=ottertal` startet die Kampagne direkt, `?seed=12`
 startet ein freies Spiel auf einer anderen Karte, `?frei` macht Wasserbau
-kostenlos, `?flach` schaltet den Tilt-Shift-Effekt ab.
+kostenlos und schaltet alle Techniken frei, `?alles` schaltet nur die Techniken
+frei, `?flach` schaltet den Tilt-Shift-Effekt ab.
 
 ## Spielstände in der Cloud
 
@@ -68,5 +77,5 @@ npm run build
 ```
 
 Aufbau: `src/sim` (Simulation, läuft im Worker), `src/render` (Three.js und
-Nachbearbeitung), `src/ui` (Oberfläche und Menü), `src/data` (Gebäude und
-Karten), `src/online` (Spielstände lokal und in der Cloud).
+Nachbearbeitung), `src/ui` (Oberfläche und Menü), `src/data` (Gebäude, Waren,
+Technologien und Karten), `src/online` (Spielstände lokal und in der Cloud).

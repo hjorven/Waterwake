@@ -1,4 +1,6 @@
 import { BUILDINGS, BUILDING_ORDER, CATEGORY_LABEL, DAM_WOOD_PER_LEVEL, DRINK_SPOTS, GATE_WOOD, type BuildingCategory, type BuildingId } from '../data/buildings';
+import { costText, FOODS, GOOD_LABEL, GOODS } from '../data/goods';
+import { TECH_FOR, TECH_ORDER, TECHS, type TechId } from '../data/tech';
 import type { BuildingSnap, SimStats } from '../sim/protocol';
 import { MAX_DAM, MAX_DIKE, WEATHER_INFO, type Tool, type Weather } from '../sim/world';
 
@@ -8,10 +10,11 @@ export interface HudCallbacks {
   onMode(mode: Mode): void;
   onSpeed(speed: number): void;
   onDemolish(buildingId: number): void;
+  onResearch(tech: TechId): void;
   onMenu(): void;
 }
 
-type Tab = BuildingCategory | 'wasserbau' | 'gelaende';
+type Tab = BuildingCategory | 'forschung' | 'wasserbau' | 'gelaende';
 
 const SVG_OPEN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
 
@@ -32,6 +35,28 @@ export const ICONS: Record<string, string> = {
   laufrad: '<circle cx="12" cy="11" r="8"/><path d="M4 21h16"/><circle cx="12" cy="11" r="2"/><path d="M10 13l-2 4M14 13l2 4"/>',
   pumpwerk: '<rect x="3" y="10" width="12" height="10" rx="1"/><path d="M6 10V6h3v4"/><circle cx="18" cy="8" r="3"/><path d="M15 15h6v-4"/>',
   sandfilter: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9h16M4 14h16"/><path d="M8 17v2M12 17v2M16 17v2"/>',
+  pfahlhaus: '<path d="M4 12l8-6 8 6"/><path d="M6 11v5h12v-5"/><path d="M8 16v5M16 16v5M12 16v5"/>',
+  langhaus: '<path d="M3 10l9-5 9 5"/><path d="M4 10v10h16V10"/><path d="M8 20v-5h3v5M13 20v-5h3v5"/>',
+  bibliothek: '<path d="M4 4h7a2 2 0 0 1 2 2v14a2 2 0 0 0-2-2H4z"/><path d="M20 4h-7a2 2 0 0 0-2 2v14a2 2 0 0 1 2-2h7z"/>',
+  schule: '<path d="M3 11 12 6l9 5"/><path d="M5 10v9h14v-9"/><path d="M12 6V3"/><path d="M10 19v-4h4v4"/>',
+  sternwarte: '<path d="M4 20h16"/><path d="M6 20V10a6 6 0 0 1 12 0v10"/><path d="M12 10l6-6"/><circle cx="18" cy="4" r="1" fill="currentColor"/>',
+  saegewerk: '<circle cx="9" cy="13" r="6"/><circle cx="9" cy="13" r="1.5"/><path d="M15 13h6M18 10l3 3-3 3"/>',
+  werkstatt: '<path d="M14 4l6 6-2 2-6-6z"/><path d="M12 6l-8 8 2 2 8-8"/><path d="M4 20h16"/>',
+  kraeutergarten: '<path d="M12 21v-8"/><path d="M12 13c-3 0-5-2-5-5 3 0 5 2 5 5z"/><path d="M12 13c3 0 5-2 5-5-3 0-5 2-5 5z"/><path d="M4 21h16"/>',
+  fischer: '<path d="M3 12c4-5 10-5 14 0-4 5-10 5-14 0z"/><path d="M17 12l4-3v6z"/><circle cx="7" cy="11" r="1" fill="currentColor"/>',
+  fischteich: '<ellipse cx="12" cy="14" rx="9" ry="5"/><path d="M8 14c1.5-2 4-2 5.5 0"/><path d="M13.5 14l2-1.5v3z"/><path d="M5 9V6M8 10V5"/>',
+  beerengaertner: '<circle cx="9" cy="15" r="2.5"/><circle cx="15" cy="15" r="2.5"/><circle cx="12" cy="10" r="2.5"/><path d="M12 7V3"/><path d="M4 21h16"/>',
+  feld: '<path d="M12 21V8"/><path d="M12 12c-3 0-4-2-4-4 2 0 4 1 4 4zM12 12c3 0 4-2 4-4-2 0-4 1-4 4zM12 16c-3 0-4-2-4-4 2 0 4 1 4 4zM12 16c3 0 4-2 4-4-2 0-4 1-4 4z"/>',
+  baeckerei: '<path d="M4 12c0-3 4-5 8-5s8 2 8 5v7H4z"/><path d="M8 11v2M12 10v2M16 11v2"/>',
+  lagerfeuer: '<path d="M12 3c2 3 5 5 5 9a5 5 0 0 1-10 0c0-2 1-3 2-4 0 2 1 3 2 3 0-3 1-5 1-8z"/><path d="M3 21h18"/>',
+  beerenschenke: '<path d="M5 8h10v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2z"/><path d="M15 11h3a2 2 0 0 1 0 4h-3"/><path d="M5 8c0-2 2-3 5-3s5 1 5 3"/>',
+  statue: '<circle cx="12" cy="6" r="2.5"/><path d="M9 10h6l1 6H8z"/><path d="M6 20h12v-4H6z"/>',
+  spielplatz: '<path d="M3 20h18"/><path d="M6 20V8l10 8"/><path d="M6 12h4M6 16h6"/>',
+  aussichtsturm: '<path d="M8 21l2-18h4l2 18"/><path d="M6 9h12M5 15h14"/><path d="M4 21h16"/>',
+  wissen: '<path d="M9 18h6"/><path d="M10 21h4"/><path d="M8 13a5 5 0 1 1 8 0c-1 1-1.5 2-1.5 3h-5c0-1-.5-2-1.5-3z"/>',
+  nahrung: '<path d="M4 12h16a8 8 0 0 1-16 0z"/><path d="M12 12V5"/><path d="M12 5c2 0 3 1 4 2"/>',
+  bretter: '<path d="M3 8h18v4H3z"/><path d="M3 14h18v4H3z"/>',
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
   strom: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
   krank: '<circle cx="12" cy="12" r="9"/><path d="M8 9l2 2M10 9l-2 2M14 9l2 2M16 9l-2 2"/><path d="M9 16c1.5-1.5 4.5-1.5 6 0"/>',
   damm: '<path d="M3 20h18M4 20V9h16v11M4 14h16M9 9v5M14 14v6"/>',
@@ -75,6 +100,8 @@ interface Item {
   cost: string;
   desc: string;
   mode: Mode;
+  /** Forschungskarte */
+  tech?: TechId;
 }
 
 const WATER_ITEMS: Item[] = [
@@ -150,13 +177,33 @@ function buildItems(category: BuildingCategory): Item[] {
     if (d.range) extra.push(`Umkreis ${d.range}`);
     if (d.powerGen) extra.push(`bis ${fmt(d.powerGen)} Strom`);
     if (d.powerUse) extra.push(`braucht ${fmt(d.powerUse)} Strom`);
+    if (d.recipe) extra.push(`${d.recipe.inAmount} ${GOOD_LABEL[d.recipe.input]} zu ${d.recipe.outAmount} ${GOOD_LABEL[d.recipe.output]}`);
+    if (d.harvest) extra.push(`${d.harvest.amount} ${GOOD_LABEL[d.harvest.good]} alle ${d.harvest.days} Tage`);
+    if (d.knowledge) extra.push(`${fmt(d.knowledge)} Wissen je Schicht`);
+    const tech = TECH_FOR[id];
     return {
       key: id,
       label: d.name,
       icon: id,
-      cost: `${d.wood} Holz`,
-      desc: `${d.desc} ${extra.join(', ')}.`,
+      cost: costText(d.cost),
+      desc: `${d.desc} ${extra.join(', ')}.${tech ? ` Forschung: ${TECHS[tech].name}.` : ''}`,
       mode: { kind: 'build', id },
+    };
+  });
+}
+
+function researchItems(): Item[] {
+  return TECH_ORDER.map((t) => {
+    const d = TECHS[t];
+    const req = d.requires ? ` Braucht ${TECHS[d.requires].name}.` : '';
+    return {
+      key: `tech:${t}`,
+      label: d.name,
+      icon: 'wissen',
+      cost: `${d.cost} Wissen`,
+      desc: `${d.desc} Schaltet frei: ${d.unlocks.map((b) => BUILDINGS[b].name).join(', ')}.${req}`,
+      mode: { kind: 'select' },
+      tech: t,
     };
   });
 }
@@ -207,6 +254,7 @@ export class Hud {
   private stats: SimStats | null = null;
   private cards = new Map<string, HTMLElement>();
   private lastStatsKey = '';
+  private lastCardsKey = '';
 
   constructor(parent: HTMLElement, cb: HudCallbacks) {
     this.cb = cb;
@@ -284,8 +332,11 @@ export class Hud {
 
     const tabs: [Tab, string][] = [
       ['siedlung', CATEGORY_LABEL.siedlung],
+      ['freude', CATEGORY_LABEL.freude],
       ['versorgung', CATEGORY_LABEL.versorgung],
+      ['nahrung', CATEGORY_LABEL.nahrung],
       ['strom', CATEGORY_LABEL.strom],
+      ['forschung', 'Forschung'],
       ['wasserbau', 'Wasserbau'],
       ['gelaende', 'Gelände'],
     ];
@@ -319,16 +370,25 @@ export class Hud {
 
   private showTab(tab: Tab): void {
     for (const b of this.tabs.children) (b as HTMLElement).classList.toggle('active', (b as HTMLElement).dataset.tab === tab);
-    const list = tab === 'wasserbau' ? WATER_ITEMS : tab === 'gelaende' ? LAND_ITEMS : buildItems(tab);
+    const list = tab === 'wasserbau' ? WATER_ITEMS : tab === 'gelaende' ? LAND_ITEMS : tab === 'forschung' ? researchItems() : buildItems(tab);
     this.items.innerHTML = '';
     this.cards.clear();
     for (const it of list) {
       const card = document.createElement('button');
       card.className = 'card';
       card.dataset.key = it.key;
-      card.innerHTML = `<span class="card-icon">${icon(it.icon)}</span><span class="card-label">${it.label}</span><span class="card-cost">${it.cost}</span>`;
+      card.innerHTML = `<span class="card-icon">${icon(it.icon)}</span><span class="card-label">${it.label}</span><span class="card-cost">${it.cost}</span><span class="card-lock">${icon('lock')}</span>`;
       card.title = it.desc;
       card.addEventListener('click', () => {
+        if (it.tech) {
+          this.clickTech(it.tech);
+          return;
+        }
+        const tech = it.mode.kind === 'build' ? TECH_FOR[it.mode.id] : undefined;
+        if (tech && !this.researched(tech)) {
+          this.setHint(`${it.label} braucht die Forschung ${TECHS[tech].name}. Siehe Reiter Forschung.`, true);
+          return;
+        }
         const same = this.modeKey(this.mode) === it.key;
         this.setMode(same ? { kind: 'select' } : it.mode);
       });
@@ -338,6 +398,29 @@ export class Hud {
       this.cards.set(it.key, card);
     }
     this.refreshCards();
+  }
+
+  private researched(t: TechId): boolean {
+    return !!this.stats?.techs.includes(t);
+  }
+
+  private clickTech(t: TechId): void {
+    const d = TECHS[t];
+    if (this.researched(t)) {
+      this.setHint(`${d.name} ist erforscht.`);
+      return;
+    }
+    if (d.requires && !this.researched(d.requires)) {
+      this.setHint(`${d.name} braucht zuerst ${TECHS[d.requires].name}.`, true);
+      return;
+    }
+    const have = this.stats?.knowledge ?? 0;
+    if (have < d.cost) {
+      this.setHint(`${d.name} kostet ${d.cost} Wissen, vorhanden sind ${Math.floor(have)}. Bibliothek, Schule und Sternwarte sammeln Wissen.`, true);
+      return;
+    }
+    this.cb.onResearch(t);
+    this.setHint(`${d.name} wird erforscht.`);
   }
 
   private modeKey(m: Mode): string {
@@ -354,10 +437,28 @@ export class Hud {
 
   private refreshCards(): void {
     const key = this.modeKey(this.mode);
+    const s = this.stats;
     for (const [k, card] of this.cards) {
       card.classList.toggle('active', k === key);
+      if (k.startsWith('tech:')) {
+        const d = TECHS[k.slice(5) as TechId];
+        const done = this.researched(d.id);
+        const blocked = !!d.requires && !this.researched(d.requires);
+        card.classList.toggle('done', done);
+        card.classList.toggle('locked', !done && blocked);
+        card.classList.toggle('poor', !done && !blocked && (s?.knowledge ?? 0) < d.cost);
+        card.querySelector('.card-cost')!.textContent = done ? 'erforscht' : blocked ? `braucht ${TECHS[d.requires!].name}` : `${d.cost} Wissen`;
+        continue;
+      }
       const def = BUILDINGS[k as BuildingId];
-      if (def) card.classList.toggle('poor', this.wood < def.wood);
+      if (!def) continue;
+      const tech = TECH_FOR[def.id];
+      const locked = !!tech && !this.researched(tech);
+      card.classList.toggle('locked', locked);
+      let poor = false;
+      for (const g of GOODS) if ((def.cost[g] ?? 0) > (s?.goods[g] ?? (g === 'holz' ? this.wood : 0))) poor = true;
+      card.classList.toggle('poor', !locked && poor);
+      card.querySelector('.card-cost')!.textContent = locked ? `Forschung: ${TECHS[tech].name}` : costText(def.cost);
     }
   }
 
@@ -406,20 +507,29 @@ export class Hud {
     this.wood = s.wood;
     this.stats = s;
     this.setSpeed(s.speed);
-    this.refreshCards();
+    // Karten nur neu bewerten, wenn sich Vorräte, Wissen oder Forschung geändert haben
+    const cardsKey = `${GOODS.map((g) => Math.floor(s.goods[g])).join(',')}|${Math.floor(s.knowledge)}|${s.techs.join(',')}`;
+    if (cardsKey !== this.lastCardsKey) {
+      this.lastCardsKey = cardsKey;
+      this.refreshCards();
+    }
     const info = s.season;
     // Die Leiste nur neu bauen, wenn sich sichtbare Werte geändert haben
     const key = [
       info.day, info.year, s.weather, info.daysLeft, info.next, info.nextMin, info.nextMax,
-      s.population, s.children, s.sick, s.housing, Math.floor(s.wood), s.storageCap, Math.floor(s.berries), Math.floor(s.water), s.waterCap,
+      s.population, s.children, s.sick, s.housing, Math.floor(s.wood), s.storageCap, Math.floor(s.food), Math.floor(s.water), s.waterCap,
       Math.round(s.mood * 20), s.outcome, s.scenario, pollutionLabel(s.waterPollution), s.hasPower, fmt(s.power.supply), fmt(s.power.demand),
+      Math.floor(s.goods.bretter), Math.floor(s.knowledge), s.hasKnowledge, s.toolBonus, s.techs.length,
     ].join('|');
     if (key === this.lastStatsKey) return;
     this.lastStatsKey = key;
 
     const phase = WEATHER_INFO[s.weather].label;
     const nextLabel = WEATHER_INFO[info.next].label;
-    const forecast = `Dann ${nextLabel}, ${info.nextMin} bis ${info.nextMax} Tage`;
+    const forecast =
+      info.nextMin === info.nextMax
+        ? `Dann ${nextLabel}, genau ${info.nextMin} ${info.nextMin === 1 ? 'Tag' : 'Tage'}`
+        : `Dann ${nextLabel}, ${info.nextMin} bis ${info.nextMax} Tage`;
     this.season.innerHTML = `<span class="season-icon ${s.weather}">${icon(WEATHER_ICON[s.weather])}</span>
       <div class="season-text"><b>Tag ${info.day} · Jahr ${info.year}</b><small>${phase}, noch ${info.daysLeft} ${info.daysLeft === 1 ? 'Tag' : 'Tage'}</small><small class="forecast">${forecast}</small></div>`;
     this.season.className = `season ${s.weather}`;
@@ -440,21 +550,25 @@ export class Hud {
       `<div class="chip ${cls}" title="${title}">${icon(ic)}<b>${value}</b></div>`;
     const moodCls = s.mood < 0.4 ? 'warn' : s.mood >= 0.75 ? 'good' : '';
     const dirty = s.waterPollution >= 0.3;
+    const foodKinds = FOODS.filter((g) => s.goods[g] >= 1).map((g) => `${Math.floor(s.goods[g])} ${GOOD_LABEL[g]}`);
+    const showPlanks = s.goods.bretter >= 1 || s.techs.includes('zimmerei');
     this.res.innerHTML =
       chip('otter', `Bewohner / Betten${s.children ? `, davon ${s.children} Junge` : ''}${s.sick ? `, ${s.sick} krank` : ''}`, `${s.population}<span>/${s.housing}</span>`, s.population > s.housing ? 'warn' : '') +
       (s.sick ? chip('krank', 'Kranke Otter: schmutziges Wasser getrunken. Sauberes Wasser und eine Heilerhütte helfen.', `${s.sick}`, 'warn') : '') +
-      chip(s.mood < 0.4 ? 'moodBad' : 'mood', `Zufriedenheit: ${moodLabel(s.mood)}. Hütten, Essen, Wasser, Badesteg und Musikplatz machen zufrieden.`, `${Math.round(s.mood * 100)}<span>%</span>`, moodCls) +
-      chip('holz', 'Holz im Lager / Platz', `${Math.floor(s.wood)}<span>/${s.storageCap}</span>`, s.wood < 5 ? 'warn' : '') +
-      chip('beeren', 'Beeren im Lager / Platz', `${Math.floor(s.berries)}<span>/${s.storageCap}</span>`, s.berries < s.population ? 'warn' : '') +
+      chip(s.mood < 0.4 ? 'moodBad' : 'mood', `Zufriedenheit: ${moodLabel(s.mood)}. Hütten, Essen, Wasser, Abwechslung beim Essen und Freude-Gebäude machen zufrieden.`, `${Math.round(s.mood * 100)}<span>%</span>`, moodCls) +
+      chip('holz', `Holz im Lager / Platz${s.toolBonus ? '. Werkzeug für alle: der Clan arbeitet schneller' : ''}`, `${Math.floor(s.wood)}<span>/${s.storageCap}</span>`, s.wood < 5 ? 'warn' : '') +
+      (showPlanks ? chip('bretter', 'Bretter im Lager / Platz. Das Sägewerk macht sie aus Holz.', `${Math.floor(s.goods.bretter)}<span>/${s.storageCap}</span>`, '') : '') +
+      chip('nahrung', `Nahrung im Lager: ${foodKinds.length ? foodKinds.join(', ') : 'nichts'}. Mehrere Sorten machen zufrieden.`, `${Math.floor(s.food)}<span>/${s.storageCap}</span>`, s.food < s.population ? 'warn' : '') +
       chip('wasser', `Wasser im Speicher / Speicherplatz, ${pollutionLabel(s.waterPollution)}${dirty ? '. Ein Sandfilter reinigt es' : ''}`, `${Math.floor(s.water)}<span>/${s.waterCap}</span>`, dirty || (s.waterCap > 0 && s.water < s.population) ? 'warn' : '') +
-      (s.hasPower ? chip('strom', `Strom: Erzeugung / Bedarf. ${s.power.ratio < 1 ? 'Es fehlt Strom, Maschinen laufen langsamer.' : 'Alle Maschinen laufen.'}`, `${fmt(s.power.supply)}<span>/${fmt(s.power.demand)}</span>`, s.power.ratio < 1 ? 'warn' : '') : '');
+      (s.hasPower ? chip('strom', `Strom: Erzeugung / Bedarf. ${s.power.ratio < 1 ? 'Es fehlt Strom, Maschinen laufen langsamer.' : 'Alle Maschinen laufen.'}`, `${fmt(s.power.supply)}<span>/${fmt(s.power.demand)}</span>`, s.power.ratio < 1 ? 'warn' : '') : '') +
+      (s.hasKnowledge ? chip('wissen', `Wissen für die Forschung, ${s.techs.length} von ${TECH_ORDER.length} Techniken erforscht. Reiter Forschung.`, `${Math.floor(s.knowledge)}`, '') : '');
   }
 
   pushMessages(list: string[]): void {
     for (const text of list) {
       const el = document.createElement('div');
-      const bad = /verdurstet|verhungert|Dürre|Nicht genug|Kein |vertrocknet|aufgebraucht|Hochwasser|weggerissen|ertrunken|gestorben|ausgelöscht|krank|verschmutzt|Schlammflut|eingegangen|Holz ist alle/.test(text);
-      const good = /geboren|Ziel erreicht|fertig\.|wieder gesund/.test(text);
+      const bad = /verdurstet|verhungert|Dürre|Nicht genug|Kein |vertrocknet|aufgebraucht|Hochwasser|weggerissen|ertrunken|gestorben|ausgelöscht|krank|verschmutzt|Schlammflut|eingegangen|Holz ist alle|warten auf|Ohne Arbeiter|nicht genug Wissen|zuerst/.test(text);
+      const good = /geboren|Ziel erreicht|fertig\.|wieder gesund|erforscht\./.test(text);
       el.className = `msg${bad ? ' bad' : good ? ' good' : ''}`;
       el.textContent = text;
       this.messages.appendChild(el);
@@ -477,14 +591,21 @@ export class Hud {
     else if (b.damage > 0.02) rows.push(`<div class="row"><span>Schaden heilt</span><b>${Math.round(b.damage * 100)} %</b></div>`);
     if (!b.built) {
       rows.push(`<div class="row"><span>Baustelle</span><b>${Math.round(b.progress * 100)} %</b></div>`);
-      rows.push(`<div class="row"><span>Holz geliefert</span><b>${b.woodDelivered} / ${def.wood}</b></div>`);
+      for (const g of GOODS) {
+        const need = def.cost[g] ?? 0;
+        if (need) rows.push(`<div class="row${b.deliveredGoods[g] < need ? ' open' : ''}"><span>${GOOD_LABEL[g]} geliefert</span><b>${Math.floor(b.deliveredGoods[g])} / ${need}</b></div>`);
+      }
     } else {
       if (def.workers) rows.push(`<div class="row"><span>Arbeiter</span><b>${b.workers} / ${def.workers}</b></div>`);
       if (def.housing) rows.push(`<div class="row"><span>Bewohner</span><b>${b.residents} / ${def.housing}</b></div>`);
       if (def.storage) {
-        rows.push(`<div class="row"><span>Holz</span><b>${Math.floor(b.wood)} / ${def.storage}</b></div>`);
-        rows.push(`<div class="row"><span>Beeren</span><b>${Math.floor(b.berries)} / ${def.storage}</b></div>`);
+        for (const g of GOODS) {
+          if (b.stock[g] >= 1 || g === 'holz' || g === 'beeren') rows.push(`<div class="row"><span>${GOOD_LABEL[g]}</span><b>${Math.floor(b.stock[g])} / ${def.storage}</b></div>`);
+        }
       }
+      if (def.recipe) rows.push(`<div class="row"><span>Verarbeitet</span><b>${def.recipe.inAmount} ${GOOD_LABEL[def.recipe.input]} zu ${def.recipe.outAmount} ${GOOD_LABEL[def.recipe.output]}</b></div>`);
+      if (def.harvest) rows.push(`<div class="row"><span>Reife</span><b>${b.growth >= 1 ? 'erntereif' : `${Math.round(b.growth * 100)} %`}</b></div>`);
+      if (def.knowledge) rows.push(`<div class="row"><span>Wissen</span><b>${fmt(def.knowledge)} je Schicht und Arbeiter</b></div>`);
       if (def.waterCap) rows.push(`<div class="row"><span>Speicherplatz</span><b>${def.waterCap} Wasser</b></div>`);
       if (DRINK_SPOTS.includes(b.def) && this.stats) rows.push(`<div class="row${this.stats.waterPollution >= 0.3 ? ' bad' : ''}"><span>Wasser im Speicher</span><b>${pollutionLabel(this.stats.waterPollution)}</b></div>`);
       if (def.powerGen) rows.push(`<div class="row"><span>Strom</span><b>${fmt(b.power)} von ${fmt(def.powerGen)}</b></div>`);
