@@ -95,6 +95,7 @@ const LOOKS: Record<Weather, Look> = {
   normal: { tint: new THREE.Vector3(1, 1, 1), saturation: 1.15, heat: 0 },
   schmelze: { tint: new THREE.Vector3(0.93, 0.97, 1.06), saturation: 1.02, heat: 0 },
   duerre: { tint: new THREE.Vector3(1.08, 0.99, 0.86), saturation: 1.1, heat: 1 },
+  schlamm: { tint: new THREE.Vector3(1.0, 0.92, 0.98), saturation: 0.95, heat: 0 },
 };
 
 /**

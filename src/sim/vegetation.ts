@@ -9,6 +9,8 @@ export const BERRIES_PER_BUSH = 3;
 export const WOOD_PER_TREE = 3;
 /** Ab dieser Wassertiefe ertrinken Pflanzen mit der Zeit */
 export const DROWN_DEPTH = 0.8;
+/** Ab dieser Verschmutzung des Wassers nebenan nehmen Pflanzen Schaden */
+export const POISON_LEVEL = 0.35;
 
 const DX = [-1, 1, 0, 0];
 const DY = [0, 0, -1, 1];
@@ -28,6 +30,8 @@ export class Vegetation {
   stress: Float32Array;
   /** Sekunden unter tiefem Wasser (Hochwasser) */
   drown: Float32Array;
+  /** Sekunden neben schmutzigem Wasser (Schlammflut) */
+  poison: Float32Array;
   /** Fortschritt zur nächsten Stufe 0..1 */
   growth: Float32Array;
   /** steigt, wenn sich Bäume oder Sträucher ändern */
@@ -49,6 +53,7 @@ export class Vegetation {
     this.dry = new Uint8Array(n);
     this.stress = new Float32Array(n);
     this.drown = new Float32Array(n);
+    this.poison = new Float32Array(n);
     this.growth = new Float32Array(n);
     this.queue = new Int32Array(n);
     this.dist = new Int16Array(n);
@@ -154,6 +159,44 @@ export class Vegetation {
   }
 
   /**
+   * Schlammflut: Pflanzen, die an schmutzigem Wasser stehen, gehen nach
+   * einer Weile ein (Sträucher nach anderthalb Tagen, Bäume nach vier, also
+   * nur bei langen Schlammfluten). Gibt die Zahl der vergifteten Pflanzen zurück.
+   */
+  updatePollution(depth: Float32Array, pollution: Float32Array, dt: number): number {
+    const { w, h, trees, bushes, poison, growth, stress } = this;
+    let died = 0;
+    const dirty = (i: number) => depth[i] > 0.05 && pollution[i] >= POISON_LEVEL;
+    for (let i = 0; i < trees.length; i++) {
+      const tree = trees[i];
+      const bush = bushes[i];
+      if (tree === 0 && bush === 0) {
+        poison[i] = 0;
+        continue;
+      }
+      const x = i % w;
+      const y = (i / w) | 0;
+      const near = dirty(i) || (x > 0 && dirty(i - 1)) || (x < w - 1 && dirty(i + 1)) || (y > 0 && dirty(i - w)) || (y < h - 1 && dirty(i + w));
+      if (near) {
+        poison[i] += dt;
+        const limit = tree > 0 ? 4 * DAY : 1.5 * DAY;
+        if (poison[i] >= limit) {
+          trees[i] = 0;
+          bushes[i] = 0;
+          poison[i] = 0;
+          growth[i] = 0;
+          stress[i] = 0;
+          died++;
+        }
+      } else if (poison[i] > 0) {
+        poison[i] = Math.max(0, poison[i] - dt);
+      }
+    }
+    if (died > 0) this.version++;
+    return died;
+  }
+
+  /**
    * Wachstum und Trockenstress für eine Zeitspanne in Sekunden.
    * Gibt zurück, wie viele Pflanzen vertrocknet sind.
    */
@@ -217,6 +260,7 @@ export class Vegetation {
     this.growth[i] = 0;
     this.stress[i] = 0;
     this.drown[i] = 0;
+    this.poison[i] = 0;
     this.version++;
     return true;
   }

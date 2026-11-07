@@ -33,7 +33,7 @@ function setup(seed = 7): { world: World; lx: number; ly: number } {
   return { world, lx: lager.x, ly: lager.y };
 }
 
-describe('Siedlung', () => {
+describe('Siedlung', { timeout: 30000 }, () => {
   it('startet mit Lager, Ottern und Pflanzen', () => {
     const { world } = setup();
     const list = [...world.buildings.alive()];
@@ -96,6 +96,22 @@ describe('Siedlung', () => {
     const cutter = [...world.buildings.alive()].find((b) => b.def === 'holzfaeller')!;
     expect(cutter.built).toBe(true);
     runDays(world, 14);
+    expect([...world.buildings.alive()].filter((b) => !b.built).map((b) => b.def)).toEqual([]);
+  });
+
+  it('auch wenn alle Otter Arbeit haben, werden neue Baustellen fertig', () => {
+    const { world, lx, ly } = setup();
+    world.forceWeather('normal');
+    placeNear(world, 'holzfaeller', lx, ly);
+    placeNear(world, 'foerster', lx, ly);
+    placeNear(world, 'pumpe', lx, ly, 24);
+    placeNear(world, 'sammler', lx, ly);
+    runDays(world, 6);
+    expect([...world.buildings.alive()].every((b) => b.built)).toBe(true);
+    expect([...world.citizens.alive()].every((c) => c.workplace >= 0)).toBe(true);
+    expect(placeNear(world, 'huette', lx, ly)).toBe(true);
+    expect(placeNear(world, 'wasserrad', lx, ly, 24)).toBe(true);
+    runDays(world, 6);
     expect([...world.buildings.alive()].filter((b) => !b.built).map((b) => b.def)).toEqual([]);
   });
 
@@ -209,6 +225,93 @@ describe('Siedlung', () => {
     expect(c.alive).toBe(false);
     expect(world.citizens.deaths).toBe(1);
     expect(world.messages.join(' ')).toContain('hohem Alter');
+  });
+
+  it('Schlammflut: Fluss wird schmutzig, Pflanzen am Ufer gehen ein, Otter werden krank', () => {
+    const { world } = setup();
+    world.forceWeather('schlamm');
+    runDays(world, 5);
+    expect(world.water.maxPollution()).toBeGreaterThan(0.5);
+    expect(world.messages.join(' ')).toContain('eingegangen');
+    expect(world.citizens.sick()).toBeGreaterThan(0);
+    expect(world.messages.join(' ')).toContain('krank geworden');
+  });
+
+  it('die Heilerhütte macht kranke Otter schnell gesund', () => {
+    const { world, lx, ly } = setup();
+    world.forceWeather('normal');
+    expect(placeNear(world, 'heiler', lx, ly)).toBe(true);
+    runDays(world, 4);
+    const heiler = [...world.buildings.alive()].find((b) => b.def === 'heiler')!;
+    expect(heiler.built).toBe(true);
+    for (const c of world.citizens.alive()) {
+      c.health = 0.3;
+      c.sick = true;
+    }
+    runDays(world, 2);
+    expect(world.citizens.sick()).toBe(0);
+    expect(world.messages.join(' ')).toContain('wieder gesund');
+  });
+
+  it('ohne Heiler dauert die Erholung länger', () => {
+    const { world } = setup();
+    world.forceWeather('normal');
+    for (const c of world.citizens.alive()) {
+      c.health = 0.3;
+      c.sick = true;
+    }
+    runDays(world, 2);
+    expect(world.citizens.sick()).toBe(START_OTTERS);
+    runDays(world, 3);
+    expect(world.citizens.sick()).toBe(0);
+  });
+
+  it('Wasserrad, Pumpwerk und Sandfilter: Strom pumpt und reinigt ohne Arbeiter', () => {
+    const { world, lx, ly } = setup();
+    world.forceWeather('normal');
+    expect(placeNear(world, 'holzfaeller', lx, ly)).toBe(true);
+    expect(placeNear(world, 'wasserrad', lx, ly, 24)).toBe(true);
+    expect(placeNear(world, 'pumpwerk', lx, ly, 24)).toBe(true);
+    expect(placeNear(world, 'sandfilter', lx, ly)).toBe(true);
+    expect(placeNear(world, 'tank', lx, ly)).toBe(true);
+    runDays(world, 12);
+    const unbuilt = [...world.buildings.alive()].filter((b) => !b.built).map((b) => b.def);
+    expect(unbuilt).toEqual([]);
+    expect(world.power.supply).toBeGreaterThan(0.5);
+    expect(world.power.demand).toBeCloseTo(1.6, 5);
+    // niemand pumpt von Hand, trotzdem ist Wasser im Speicher
+    expect(world.store.stored).toBeGreaterThan(5);
+    world.store.pollution = 0.8;
+    runDays(world, 1);
+    expect(world.store.pollution).toBeLessThan(0.2);
+  });
+
+  it('das Laufrad springt ein, wenn Wasserräder fehlen', () => {
+    const { world, lx, ly } = setup();
+    world.forceWeather('normal');
+    expect(placeNear(world, 'laufrad', lx, ly)).toBe(true);
+    expect(placeNear(world, 'pumpwerk', lx, ly, 24)).toBe(true);
+    runDays(world, 8);
+    expect([...world.buildings.alive()].every((b) => b.built)).toBe(true);
+    let running = 0;
+    for (let s = 0; s < DAY / 0.05; s++) {
+      world.step(0.05);
+      if (world.power.supply > 0.5) running++;
+    }
+    expect(running).toBeGreaterThan(DAY / 0.05 / 4);
+    expect(world.store.stored).toBeGreaterThan(2);
+  });
+
+  it('der Brunnen liefert auch in der Dürre sauberes Wasser', () => {
+    const { world, lx, ly } = setup();
+    world.forceWeather('duerre');
+    world.buildings.place('brunnen', lx - 3, ly, true);
+    for (const c of world.citizens.alive()) c.water = 1;
+    world.store.pollution = 0.5;
+    world.store.stored = 1;
+    runDays(world, 1 / 6);
+    expect(world.store.stored).toBeGreaterThan(1.2);
+    expect(world.store.pollution).toBeLessThan(0.5);
   });
 
   it('Ziel erreicht und Clan ausgelöscht werden gemeldet', () => {

@@ -24,9 +24,16 @@ export class WaterSim {
   flux: Float32Array;
   /** 1 = Senke (Abfluss aus der Karte, z. B. Flussmündung am Rand) */
   sink: Uint8Array;
+  /** Verschmutzung als Konzentration 0..1 je Zelle, wird mit dem Wasser mitgetragen */
+  pollution: Float32Array;
+  private pollNext: Float32Array;
   sources: Source[] = [];
   /** Multiplikator für alle Quellen (Dürre 0, Schneeschmelze 3) */
   sourceFactor = 1;
+  /** Konzentration der Verschmutzung im Quellwasser (Schlammflut 1) */
+  sourcePollution = 0;
+  /** Abbau der Verschmutzung pro Sekunde (halbiert sich in etwa zwei Tagen) */
+  decay = 0.0058;
   /** Verdunstung pro Sekunde */
   evaporation = 0;
   /** Volumen, das seit dem letzten Abholen über Senken abgeflossen ist */
@@ -43,18 +50,23 @@ export class WaterSim {
     this.depth = new Float32Array(w * h);
     this.flux = new Float32Array(w * h * 4);
     this.sink = new Uint8Array(w * h);
+    this.pollution = new Float32Array(w * h);
+    this.pollNext = new Float32Array(w * h);
   }
 
   step(dt: number): void {
-    const { w, h, terrain, depth, flux, sink } = this;
+    const { w, h, terrain, depth, flux, sink, pollution, pollNext } = this;
     const gravity = 9.81;
     const damping = 0.995;
 
-    // 1. Quellen
+    // 1. Quellen (Schmutz mischt sich mit dem vorhandenen Wasser)
     if (this.sourceFactor > 0) {
       for (const s of this.sources) {
         const v = s.rate * this.sourceFactor * dt;
-        depth[s.index] += v;
+        const i = s.index;
+        const total = depth[i] + v;
+        pollution[i] = total > 1e-6 ? (pollution[i] * depth[i] + this.sourcePollution * v) / total : 0;
+        depth[i] = total;
         this.added += v;
       }
     }
@@ -102,20 +114,41 @@ export class WaterSim {
       }
     }
 
-    // 3. Wassertiefen aktualisieren
+    // 3. Wassertiefen und Schmutzfracht aktualisieren. Der Schmutz wandert
+    //    mit dem Wasser: Jeder Ausfluss nimmt die Konzentration der Zelle
+    //    mit, Verdunstung lässt ihn zurück, Senken tragen ihn fort.
     const evap = this.evaporation * dt;
+    const keep = Math.max(0, 1 - this.decay * dt);
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
         const i = y * w + x;
         const base = i * 4;
         const outflow = flux[base] + flux[base + 1] + flux[base + 2] + flux[base + 3];
         let inflow = 0;
-        if (x > 0) inflow += flux[(i - 1) * 4 + 1];
-        if (x < w - 1) inflow += flux[(i + 1) * 4 + 0];
-        if (y > 0) inflow += flux[(i - w) * 4 + 3];
-        if (y < h - 1) inflow += flux[(i + w) * 4 + 2];
+        let dirt = 0;
+        if (x > 0) {
+          const f = flux[(i - 1) * 4 + 1];
+          inflow += f;
+          dirt += f * pollution[i - 1];
+        }
+        if (x < w - 1) {
+          const f = flux[(i + 1) * 4 + 0];
+          inflow += f;
+          dirt += f * pollution[i + 1];
+        }
+        if (y > 0) {
+          const f = flux[(i - w) * 4 + 3];
+          inflow += f;
+          dirt += f * pollution[i - w];
+        }
+        if (y < h - 1) {
+          const f = flux[(i + w) * 4 + 2];
+          inflow += f;
+          dirt += f * pollution[i + w];
+        }
 
         let next = depth[i] + dt * (inflow - outflow);
+        let mass = (depth[i] - dt * outflow) * pollution[i] + dt * dirt;
         if (evap > 0 && next > 0) {
           const e = next < evap ? next : evap;
           next -= e;
@@ -124,10 +157,19 @@ export class WaterSim {
         if (sink[i] && next > 0) {
           this.drained += next;
           next = 0;
+          mass = 0;
         }
-        depth[i] = next > 1e-6 ? next : 0;
+        if (next > 1e-6) {
+          depth[i] = next;
+          const c = (mass / next) * keep;
+          pollNext[i] = c > 1 ? 1 : c > 1e-4 ? c : 0;
+        } else {
+          depth[i] = 0;
+          pollNext[i] = 0;
+        }
       }
     }
+    this.pollution.set(pollNext);
   }
 
   /** Fließgeschwindigkeit einer Zelle, z. B. für Wasserräder */
@@ -154,6 +196,21 @@ export class WaterSim {
     let s = 0;
     for (let i = 0; i < this.depth.length; i++) s += this.depth[i];
     return s;
+  }
+
+  /** Höchste Verschmutzung auf der Karte (für Anzeige und Speichern) */
+  maxPollution(): number {
+    let m = 0;
+    for (let i = 0; i < this.pollution.length; i++) if (this.pollution[i] > m) m = this.pollution[i];
+    return m;
+  }
+
+  /** Wasser aus einer Zelle entnehmen, gibt die Konzentration des Entnommenen zurück */
+  take(i: number, amount: number): number {
+    const d = this.depth[i];
+    const t = amount < d ? amount : d;
+    this.depth[i] = d - t;
+    return this.pollution[i];
   }
 }
 

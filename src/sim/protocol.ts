@@ -28,6 +28,8 @@ export interface BuildingSnap {
   woodDelivered: number;
   flooded: boolean;
   damage: number;
+  /** erzeugter Strom (Wasserrad, Laufrad) oder Anteil der Versorgung (Verbraucher) */
+  power: number;
 }
 
 export interface SimStats extends WorldStats {
@@ -47,8 +49,8 @@ export interface SimStats extends WorldStats {
   stepMs: number;
 }
 
-/** Werte je Bewohner im Float32Array: Id, x, y, z, Blickrichtung, Zustand, Ware, Größe */
-export const CITIZEN_STRIDE = 8;
+/** Werte je Bewohner im Float32Array: Id, x, y, z, Blickrichtung, Zustand, Ware, Größe, krank */
+export const CITIZEN_STRIDE = 9;
 
 /** Nachrichten vom Worker an den Hauptthread */
 export type FromWorker =
@@ -68,6 +70,8 @@ export type FromWorker =
       type: 'water';
       depth: Float32Array<ArrayBufferLike>;
       vel: Float32Array<ArrayBufferLike>;
+      /** Verschmutzung je Zelle, null solange alles sauber ist */
+      pollution: Float32Array<ArrayBufferLike> | null;
       citizens: Float32Array<ArrayBufferLike>;
       citizenCount: number;
       stats: SimStats;

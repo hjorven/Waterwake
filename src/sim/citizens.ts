@@ -1,4 +1,4 @@
-import { BUILDINGS } from '../data/buildings';
+import { BUILDINGS, DRINK_SPOTS } from '../data/buildings';
 import type { Building, Buildings, Good } from './buildings';
 import type { Pathfinder } from './pathfinding';
 import { DAY } from './seasons';
@@ -8,7 +8,7 @@ export type CitizenState = 'idle' | 'walk' | 'work' | 'drink' | 'eat';
 export const STATE_CODE: Record<CitizenState, number> = { idle: 0, walk: 1, work: 2, drink: 3, eat: 4 };
 export const GOOD_CODE: Record<Good, number> = { holz: 1, beeren: 2 };
 
-type TaskKind = 'pump' | 'gather' | 'chop' | 'plant' | 'haul' | 'build' | 'drink' | 'eat' | 'wander';
+type TaskKind = 'pump' | 'gather' | 'chop' | 'plant' | 'haul' | 'build' | 'drink' | 'eat' | 'wander' | 'tread' | 'heal';
 
 interface Task {
   kind: TaskKind;
@@ -53,12 +53,16 @@ export interface Citizen {
   child: boolean;
   /** Zufriedenheit 0..1 */
   mood: number;
+  /** Gesundheit 0..1, schmutziges Wasser senkt sie */
+  health: number;
+  /** krank: arbeitet langsam, ist unglücklich */
+  sick: boolean;
 }
 
 /** Gespeicherte Form eines Bewohners, ohne laufende Aufgabe */
 export type CitizenSave = Pick<
   Citizen,
-  'id' | 'name' | 'x' | 'y' | 'heading' | 'alive' | 'water' | 'food' | 'workplace' | 'home' | 'carry' | 'carryAmount' | 'age' | 'lifespan' | 'child' | 'mood'
+  'id' | 'name' | 'x' | 'y' | 'heading' | 'alive' | 'water' | 'food' | 'workplace' | 'home' | 'carry' | 'carryAmount' | 'age' | 'lifespan' | 'child' | 'mood' | 'health' | 'sick'
 >;
 
 export interface CitizensSave {
@@ -79,12 +83,20 @@ export interface Env {
   ground: Uint8Array;
   struct: Uint8Array;
   depth: Float32Array;
+  /** Verschmutzung des Wassers je Zelle 0..1 */
+  pollution: Float32Array;
   buildings: Buildings;
   veg: Vegetation;
   path: Pathfinder;
   walkable(i: number): boolean;
-  store: { stored: number };
+  store: { stored: number; pollution: number };
   waterCapacity(): number;
+  /** Wasser in den Speicher mischen, gibt die aufgenommene Menge zurück */
+  addWater(amount: number, pollution: number): number;
+  /** Laufräder sollen laufen */
+  needsTread(): boolean;
+  /** im Umkreis einer Heilerhütte, in der gerade jemand arbeitet */
+  healAt(x: number, y: number): boolean;
   /** Zahl der Freude-Gebäude verschiedener Art, die diesen Punkt erreichen */
   joyAt(x: number, y: number): number;
   /** Zellen, die gerade jemand als Ziel hat */
@@ -110,7 +122,10 @@ const CHOP_TIME = 5;
 const PICK_TIME = 3;
 const PLANT_TIME = 3;
 const HAUL_MAX = 6;
+/** Höchstens so viele bauen an einer Baustelle, so viele liefern insgesamt */
 const MAX_BUILDERS = 2;
+const MAX_HAULERS = 2;
+const MAX_BUILDERS_TOTAL = 3;
 /** Tage, bis ein Junges erwachsen ist */
 export const CHILD_DAYS = 6;
 /** Zeitkonstante, mit der sich die Stimmung an die Lage anpasst */
@@ -119,6 +134,16 @@ const MOOD_TIME = 0.5 * DAY;
 const BIRTH_RATE = 0.12;
 /** Trauer nach einem Todesfall in Sekunden */
 const GRIEF_TIME = 2 * DAY;
+/** Unter dieser Gesundheit ist ein Otter krank, ab WELL_AT wieder gesund */
+export const SICK_AT = 0.4;
+const WELL_AT = 0.65;
+/** Gesundheitsverlust je Schluck bei voller Verschmutzung */
+const DIRT_HARM = 0.5;
+/** Erholung je Tag, mit Heiler deutlich schneller */
+const HEALTH_REGEN = 0.08;
+const HEAL_REGEN = 0.6;
+/** Dauer einer Runde im Laufrad oder einer Behandlung in Sekunden */
+const SHIFT_TIME = 12;
 
 export class Citizens {
   readonly list: Citizen[] = [];
@@ -196,9 +221,25 @@ export class Citizens {
       lifespan: 55 + Math.floor(rnd() * 25),
       child,
       mood: 0.6,
+      health: 1,
+      sick: false,
     };
     this.list.push(c);
     return c;
+  }
+
+  sick(): number {
+    let n = 0;
+    for (const c of this.list) if (c.alive && c.sick) n++;
+    return n;
+  }
+
+  /** Arbeitet gerade jemand mit dieser Aufgabe an dem Gebäude? */
+  workingAt(buildingId: number, kind: 'tread' | 'heal'): boolean {
+    for (const c of this.list) {
+      if (c.alive && c.state === 'work' && c.task && c.task.kind === kind && c.task.building === buildingId) return true;
+    }
+    return false;
   }
 
   cell(c: Citizen): number {
@@ -263,9 +304,28 @@ export class Citizens {
       const at = home ? env.buildings.center(home) : c;
       t += 0.1 * Math.min(2, env.joyAt(at.x, at.y));
       if (this.grief > 0) t -= 0.15;
+      if (c.sick) t -= 0.2;
       t = Math.max(0, Math.min(1, t));
       c.mood += (t - c.mood) * Math.min(1, dt / MOOD_TIME);
+      // Gesundheit erholt sich langsam, mit Heiler schnell
+      if (c.health < 1) {
+        const regen = (env.healAt(c.x, c.y) ? HEAL_REGEN : HEALTH_REGEN) * (dt / DAY);
+        c.health = Math.min(1, c.health + regen);
+      }
+      if (!c.sick && c.health < SICK_AT) {
+        c.sick = true;
+        env.log(`${c.name} ist krank geworden. Sauberes Wasser und eine Heilerhütte helfen.`);
+      } else if (c.sick && c.health >= WELL_AT) {
+        c.sick = false;
+        env.log(`${c.name} ist wieder gesund.`);
+      }
     }
+  }
+
+  /** Schmutziges Wasser getrunken */
+  private harm(c: Citizen, pollution: number): void {
+    c.health = Math.max(0, c.health - pollution * DIRT_HARM);
+    if (c.health <= 0) this.die(c, 'an der Schlammkrankheit gestorben');
   }
 
   private daily(): void {
@@ -394,7 +454,7 @@ export class Citizens {
     // 1. Bedürfnisse
     if (c.water < DRINK_AT) {
       if (env.store.stored >= 1) {
-        const src = b.nearest(['pumpe', 'tank'], c.x, c.y);
+        const src = b.nearest(DRINK_SPOTS, c.x, c.y);
         if (src && this.startTask(c, { kind: 'drink', building: src.id, target: -1, phase: 0, timer: 0, amount: 1, other: -1 }, b.ring(src))) return;
       }
       // Otter trinken auch direkt aus dem Fluss, solange er Wasser führt
@@ -428,15 +488,16 @@ export class Citizens {
       this.wander(c);
       return;
     }
-    // 2. Arbeitsplatz
+    // 2. Baustellen gehen vor, aber nur ein paar Otter gleichzeitig, damit
+    //    Pumpe und Sammler weiterlaufen
+    if (this.construction(c)) return;
+    // 3. Arbeitsplatz
     const wp = b.get(c.workplace);
     if (wp && wp.built) {
       if (this.workAt(c, wp)) return;
     } else if (c.workplace >= 0) {
       c.workplace = -1;
     }
-    // 3. Baustellen
-    if (!wp && this.construction(c)) return;
     // 4. Herumstreunen
     this.wander(c);
   }
@@ -474,6 +535,27 @@ export class Citizens {
           return true;
         }
         return this.startTask(c, { kind: 'chop', building: wp.id, target: t, phase: 0, timer: 0, amount: 0, other: -1 }, [t]);
+      }
+      case 'laufrad': {
+        if (!env.needsTread()) {
+          c.cooldown = 4;
+          return true;
+        }
+        return this.startTask(c, { kind: 'tread', building: wp.id, target: -1, phase: 0, timer: 0, amount: 0, other: -1 }, b.ring(wp));
+      }
+      case 'heiler': {
+        let sickNear = false;
+        for (const o of this.alive()) {
+          if (o.sick && Math.hypot(o.x - ctr.x, o.y - ctr.y) <= def.range) {
+            sickNear = true;
+            break;
+          }
+        }
+        if (!sickNear) {
+          c.cooldown = 6;
+          return true;
+        }
+        return this.startTask(c, { kind: 'heal', building: wp.id, target: -1, phase: 0, timer: 0, amount: 0, other: -1 }, b.ring(wp));
       }
       case 'foerster': {
         const t = this.findInRange(ctr, def.range, (i) =>
@@ -541,12 +623,22 @@ export class Citizens {
   private construction(c: Citizen): boolean {
     const env = this.env;
     const b = env.buildings;
+    let haulers = 0;
+    let builders = 0;
+    for (const o of this.alive()) {
+      if (!o.task) continue;
+      if (o.task.kind === 'haul') haulers++;
+      else if (o.task.kind === 'build') builders++;
+    }
     // Holz liefern: Holzfäller zuerst (sonst geht das Holz aus), dann
     // angefangene Baustellen fertig beliefern, dann in Reihenfolge der
     // Platzierung. So verteilt sich knappes Holz nicht auf viele Baustellen.
     const sites: { s: Building; key: number }[] = [];
     for (const s of b.alive()) {
+      if (haulers >= MAX_HAULERS) break;
       if (s.built || b.woodNeeded(s) <= 0) continue;
+      // eingebaute oder gerade unerreichbare Baustellen überspringen
+      if (this.isUnreachable(s.y * env.w + s.x) || !b.ring(s).some((i) => env.walkable(i))) continue;
       const started = s.woodDelivered + s.woodReserved > 0 ? 0 : 1;
       const key = (s.def === 'holzfaeller' ? 0 : 1) * 1e6 + started * 1e5 + s.id;
       sites.push({ s, key });
@@ -564,12 +656,15 @@ export class Citizens {
       }
     }
     // Bauen
+    if (builders >= MAX_BUILDERS_TOTAL) return false;
     for (const s of b.alive()) {
       if (s.built || s.woodDelivered < BUILDINGS[s.def].wood) continue;
-      let builders = 0;
-      for (const o of this.alive()) if (o.task && o.task.kind === 'build' && o.task.building === s.id) builders++;
-      if (builders >= MAX_BUILDERS) continue;
+      if (this.isUnreachable(s.y * env.w + s.x)) continue;
+      let here = 0;
+      for (const o of this.alive()) if (o.task && o.task.kind === 'build' && o.task.building === s.id) here++;
+      if (here >= MAX_BUILDERS) continue;
       if (this.startTask(c, { kind: 'build', building: s.id, target: -1, phase: 0, timer: 0, amount: 0, other: -1 }, b.ring(s))) return true;
+      this.unreachable.set(s.y * env.w + s.x, this.now + 60);
     }
     return false;
   }
@@ -707,6 +802,11 @@ export class Citizens {
       case 'build':
         c.state = 'work';
         break;
+      case 'tread':
+      case 'heal':
+        c.state = 'work';
+        t.timer = SHIFT_TIME;
+        break;
     }
   }
 
@@ -720,20 +820,26 @@ export class Citizens {
       c.state = 'idle';
       return;
     }
-    // Zufriedene Otter arbeiten schneller
-    const pace = 0.7 + 0.5 * c.mood;
+    // Zufriedene Otter arbeiten schneller, kranke langsam
+    const pace = (0.7 + 0.5 * c.mood) * (c.sick ? 0.5 : 1);
     t.timer -= dt * pace;
     switch (t.kind) {
       case 'drink': {
         if (t.timer > 0) return;
+        let dirt = -1;
         if (t.building < 0) {
           // aus dem Fluss
-          if (env.depth[t.other] > 0.02) c.water = 1;
+          if (env.depth[t.other] > 0.02) {
+            c.water = 1;
+            dirt = env.pollution[t.other];
+          }
         } else if (env.store.stored >= 1) {
           env.store.stored -= 1;
           c.water = 1;
+          dirt = env.store.pollution;
         }
         this.finish(c, 0.5);
+        if (dirt > 0.05) this.harm(c, dirt);
         return;
       }
       case 'eat': {
@@ -765,11 +871,22 @@ export class Citizens {
         let want = Math.min(PUMP_RATE * pace * dt, cap - env.store.stored);
         for (const i of wet) {
           const take = Math.min(want, env.depth[i] * 0.5);
+          const dirt = env.pollution[i];
           env.depth[i] -= take;
-          env.store.stored += take;
+          env.addWater(take, dirt);
           want -= take;
           if (want <= 0) break;
         }
+        return;
+      }
+      case 'tread':
+      case 'heal': {
+        if (c.water < DRINK_AT || c.food < EAT_AT) {
+          this.finish(c, 0);
+          return;
+        }
+        if (t.timer > 0) return;
+        this.finish(c, 0.5);
         return;
       }
       case 'gather':
@@ -823,7 +940,8 @@ export class Citizens {
           const p = env.path.find(this.cell(c), b.ring(site).filter((i) => env.walkable(i)));
           if (!p) {
             site.woodReserved = Math.max(0, site.woodReserved - got);
-            // Holz zurücklegen
+            // Baustelle eine Weile meiden und das Holz zurücklegen
+            this.unreachable.set(site.y * env.w + site.x, this.now + 60);
             this.deliverCarried(c) || this.finish(c, 3);
             return;
           }
@@ -935,6 +1053,8 @@ export class Citizens {
         lifespan: c.lifespan,
         child: c.child,
         mood: c.mood,
+        health: c.health,
+        sick: c.sick,
       })),
       nameIdx: this.nameIdx,
       births: this.births,
@@ -949,8 +1069,11 @@ export class Citizens {
   restore(s: CitizensSave): void {
     this.list.length = 0;
     for (const c of s.list) {
+      const health = c.health ?? 1;
       this.list.push({
         ...c,
+        health,
+        sick: c.sick ?? health < SICK_AT,
         state: 'idle',
         path: null,
         pathIdx: 0,

@@ -204,7 +204,7 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
       break;
     case 'water':
       depth = msg.depth;
-      water.setWater(msg.depth, msg.vel);
+      water.setWater(msg.depth, msg.vel, msg.pollution);
       instances.setCitizens(msg.citizens, msg.citizenCount, performance.now() / 1000);
       stats = msg.stats;
       hud.setStats(stats);

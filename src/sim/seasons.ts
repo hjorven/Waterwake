@@ -33,10 +33,14 @@ export interface SeasonsSave {
   rng: number;
 }
 
+/** Ab diesem Jahr folgt auf die Schneeschmelze eine Schlammflut */
+export const MUD_YEAR = 3;
+
 /**
- * Jahreslauf: Normalzeit, Schneeschmelze, Normalzeit, Dürre. Die Dürre
- * wird mit den Jahren länger, die Flutwelle der Schmelze höher. Die
- * nächste Phase wird mit einer ungefähren Dauer angekündigt.
+ * Jahreslauf: Normalzeit, Schneeschmelze, (ab Jahr 3 Schlammflut),
+ * Normalzeit, Dürre. Die Dürre wird mit den Jahren länger, die Flutwelle
+ * der Schmelze höher. Die nächste Phase wird mit einer ungefähren Dauer
+ * angekündigt.
  */
 export class Seasons {
   phase: Weather = 'normal';
@@ -52,12 +56,23 @@ export class Seasons {
   nextMax: number;
   private readonly rnd: Rng;
   private slot = 0;
+  private nextSlot = 1;
 
   constructor(seed: number) {
     this.rnd = mulberry32(seed ^ 0x5eed);
     // Die erste Normalzeit ist fest, damit der Start planbar bleibt
     this.phaseEnd = 10 * DAY;
     this.nextLength = this.lengthFor('schmelze');
+    [this.nextMin, this.nextMax] = this.announce(this.nextLength);
+  }
+
+  /** Nächste Phase bestimmen; die Schlammflut wird vor Jahr 3 übersprungen */
+  private pickNext(): void {
+    let slot = (this.slot + 1) % Seasons.ORDER.length;
+    if (Seasons.ORDER[slot] === 'schlamm' && this.year < MUD_YEAR) slot = (slot + 1) % Seasons.ORDER.length;
+    this.nextSlot = slot;
+    this.next = Seasons.ORDER[slot];
+    this.nextLength = this.lengthFor(this.next);
     [this.nextMin, this.nextMax] = this.announce(this.nextLength);
   }
 
@@ -68,6 +83,8 @@ export class Seasons {
         return 8 + Math.floor(r * 7);
       case 'schmelze':
         return 2 + Math.floor(r * 3);
+      case 'schlamm':
+        return 2 + Math.floor(r * 4);
       case 'duerre': {
         const min = Math.min(10, 3 + this.year);
         const max = Math.min(12, 6 + this.year * 2);
@@ -82,20 +99,18 @@ export class Seasons {
     return [lo, hi];
   }
 
-  private static ORDER: Weather[] = ['normal', 'schmelze', 'normal', 'duerre'];
+  private static ORDER: Weather[] = ['normal', 'schmelze', 'schlamm', 'normal', 'duerre'];
 
   /** gibt die neue Phase zurück, wenn sie gerade gewechselt hat */
   step(dt: number): Weather | null {
     this.time += dt;
     if (this.time < this.phaseEnd) return null;
-    this.slot = (this.slot + 1) % Seasons.ORDER.length;
+    this.slot = this.nextSlot;
     this.phase = this.next;
     if (this.phase === 'normal' && this.slot === 0) this.year++;
     this.phaseStart = this.time;
     this.phaseEnd = this.time + this.nextLength * DAY;
-    this.next = Seasons.ORDER[(this.slot + 1) % Seasons.ORDER.length];
-    this.nextLength = this.lengthFor(this.next);
-    [this.nextMin, this.nextMax] = this.announce(this.nextLength);
+    this.pickNext();
     return this.phase;
   }
 
@@ -151,6 +166,10 @@ export class Seasons {
     this.nextMin = s.nextMin;
     this.nextMax = s.nextMax;
     this.slot = s.slot;
+    // Platz der angekündigten Phase im Jahreslauf (ältere Spielstände kennen die Schlammflut nicht)
+    let slot = (s.slot + 1) % Seasons.ORDER.length;
+    while (Seasons.ORDER[slot] !== s.next) slot = (slot + 1) % Seasons.ORDER.length;
+    this.nextSlot = slot;
     this.rnd.state = s.rng;
   }
 }

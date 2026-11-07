@@ -14,6 +14,42 @@ function basin(w: number, h: number, wall: number): WaterSim {
 }
 
 describe('WaterSim', () => {
+  it('trägt Verschmutzung mit dem Fluss und spült sie wieder aus', () => {
+    // Rinne von links nach rechts mit Gefälle, Quelle links, Senke rechts
+    const w = 30;
+    const h = 5;
+    const sim = new WaterSim(w, h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) sim.terrain[y * w + x] = y === 0 || y === h - 1 ? 20 : 6 - x * 0.15;
+    sim.sources.push({ index: 2 * w + 1, rate: 2 });
+    for (let y = 1; y < h - 1; y++) sim.sink[y * w + w - 1] = 1;
+    sim.sourcePollution = 1;
+    for (let i = 0; i < 3000; i++) sim.step(0.05);
+    const far = 2 * w + 25;
+    expect(sim.depth[far]).toBeGreaterThan(0.01);
+    expect(sim.pollution[far]).toBeGreaterThan(0.5);
+    expect(sim.maxPollution()).toBeLessThanOrEqual(1);
+    sim.sourcePollution = 0;
+    for (let i = 0; i < 4000; i++) sim.step(0.05);
+    expect(sim.pollution[far]).toBeLessThan(0.1);
+  });
+
+  it('erhält die Schmutzfracht in einem geschlossenen Becken ohne Abbau', () => {
+    const sim = basin(12, 12, 10);
+    sim.decay = 0;
+    sim.depth[5 * 12 + 5] = 20;
+    sim.pollution[5 * 12 + 5] = 1;
+    const mass = () => {
+      let m = 0;
+      for (let i = 0; i < sim.depth.length; i++) m += sim.depth[i] * sim.pollution[i];
+      return m;
+    };
+    const before = mass();
+    for (let i = 0; i < 3000; i++) sim.step(0.05);
+    expect(mass()).toBeCloseTo(before, 2);
+    // verteilt sich im ganzen Becken
+    expect(sim.pollution[1 * 12 + 1]).toBeGreaterThan(0.5);
+  });
+
   it('erhält das Volumen in einem geschlossenen Becken', () => {
     const sim = basin(12, 12, 10);
     sim.depth[5 * 12 + 5] = 20;
