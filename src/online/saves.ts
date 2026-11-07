@@ -1,4 +1,5 @@
 import { MAX_MAPS, validateMap, type CustomMap } from '../data/custom';
+import { parseState, type AchievementState } from '../data/achievements';
 import type { RiverLink } from '../data/river';
 import type { SaveGame, SaveMeta } from '../sim/save';
 
@@ -16,6 +17,8 @@ export interface Settings {
   /** Miniatur-Unschärfe (Tilt-Shift) und Farbanpassung */
   tiltShift: boolean;
   shadows: boolean;
+  /** Lautstärke 0..1, 0 ist aus */
+  volume: number;
 }
 
 export function slotLabel(slot: string): string {
@@ -84,12 +87,14 @@ export function deleteLocalSave(slot: string): void {
 }
 
 export function loadSettings(): Settings {
-  const def: Settings = { tiltShift: true, shadows: true };
+  const def: Settings = { tiltShift: true, shadows: true, volume: 0.6 };
   const s = storage();
   if (!s) return def;
   try {
     const raw = s.getItem(SETTINGS_KEY);
-    return raw ? { ...def, ...(JSON.parse(raw) as Partial<Settings>) } : def;
+    const got = { ...def, ...(raw ? (JSON.parse(raw) as Partial<Settings>) : {}) };
+    got.volume = typeof got.volume === 'number' && Number.isFinite(got.volume) ? Math.max(0, Math.min(1, got.volume)) : def.volume;
+    return got;
   } catch {
     return def;
   }
@@ -160,6 +165,30 @@ export function saveName(name: string): void {
     s.setItem(NAME_KEY, name.trim().slice(0, 20));
   } catch {
     // voll oder gesperrt: dann eben nicht
+  }
+}
+
+const ACHIEVEMENTS_KEY = 'waterwake.achievements';
+
+/** Erreichte Errungenschaften und Zähler, nur in diesem Browser */
+export function loadAchievements(): AchievementState {
+  const s = storage();
+  if (!s) return parseState(null);
+  try {
+    const raw = s.getItem(ACHIEVEMENTS_KEY);
+    return parseState(raw ? JSON.parse(raw) : null);
+  } catch {
+    return parseState(null);
+  }
+}
+
+export function saveAchievements(state: AchievementState): void {
+  const s = storage();
+  if (!s) return;
+  try {
+    s.setItem(ACHIEVEMENTS_KEY, JSON.stringify(state));
+  } catch {
+    // voll oder gesperrt: dann gelten sie nur für diese Sitzung
   }
 }
 

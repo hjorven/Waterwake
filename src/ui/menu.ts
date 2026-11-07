@@ -1,3 +1,4 @@
+import { ACHIEVEMENTS, ACHIEVEMENT_COUNT, GROUP_NAMES, GROUP_ORDER, unlockedCount, type AchievementState } from '../data/achievements';
 import { AUTHOR_MAX, MAP_NAME_MAX, isMapCode, newMapId, normalizeCode, validateGoal, type CustomMap, type MapCore, type SharedMapInfo } from '../data/custom';
 import { DAILY_ID, dailyDateText, dailyKey } from '../data/daily';
 import { CAMPAIGN, CAMPAIGNS, MOLCH_CAMPAIGN, SCENARIOS, goalText, isUnlocked, nextScenario, requiredWin, speciesOf, type Goal, type Scenario } from '../data/maps';
@@ -60,6 +61,8 @@ export interface MenuCallbacks {
   onRiverJoin(code: string, player: string): Promise<void>;
   onRiverLeave(): Promise<void>;
   onRiverRefresh(): Promise<void>;
+  /** erreichte Errungenschaften und Zähler */
+  achievements(): AchievementState;
 }
 
 /** Stand des laufenden Spiels auf der Tageskarte */
@@ -72,7 +75,7 @@ export interface DailyScore {
   submitted: boolean;
 }
 
-export type MenuView = 'start' | 'menu' | 'campaign' | 'daily' | 'river' | 'maps' | 'mapsave' | 'saves' | 'settings' | 'intro' | 'end' | null;
+export type MenuView = 'start' | 'menu' | 'campaign' | 'daily' | 'river' | 'achievements' | 'maps' | 'mapsave' | 'saves' | 'settings' | 'intro' | 'end' | null;
 
 function metaText(e: SaveEntry | undefined): string {
   if (!e) return 'leer';
@@ -133,6 +136,7 @@ export class Menu {
     parent.appendChild(this.toasts);
     this.root.addEventListener('click', (e) => this.onClick(e));
     this.root.addEventListener('change', (e) => this.onChange(e));
+    this.root.addEventListener('input', (e) => this.onInput(e));
   }
 
   get open(): boolean {
@@ -170,6 +174,10 @@ export class Menu {
     const auto = this.cb.listLocal().find((e) => e.slot === 'auto');
     const won = this.cb.campaignWon();
     const river = this.cb.riverLink();
+    const ach = this.cb.achievements();
+    const achDone = unlockedCount(ach);
+    const latest = ACHIEVEMENTS.filter((a) => ach.unlocked[a.id]).sort((a, b) => ach.unlocked[b.id] - ach.unlocked[a.id])[0];
+    const achText = `${achDone} von ${ACHIEVEMENT_COUNT} erreicht.${latest ? ` Zuletzt: ${latest.title}.` : ' Kleine Ziele über alle Spiele hinweg.'}`;
     const all = CAMPAIGNS.flat();
     const next = all.find((sc) => !won.includes(sc.id) && isUnlocked(sc.id, won));
     const wonCount = all.filter((sc) => won.includes(sc.id)).length;
@@ -184,6 +192,7 @@ export class Menu {
         <button class="start-card" data-act="campaign">${icon('trophy')}<b>Kampagnen</b><small>${campaignText}</small></button>
         <button class="start-card" data-act="daily">${icon('calendar')}<b>Tageskarte</b><small>Karte vom ${dailyDateText(dailyKey())}, für alle gleich. Wertung in der Bestenliste.</small></button>
         <button class="start-card" data-act="maps">${icon('editor')}<b>Karteneditor</b><small>Eigene Täler bauen, teilen und per Code spielen.</small></button>
+        <button class="start-card" data-act="achievements">${icon('medal')}<b>Errungenschaften</b><small>${achText}</small></button>
         <button class="start-card" data-act="river">${icon('river')}<b>Flusskette</b><small>${river ? `Kette „${esc(river.name)}“, Code ${river.code}. Was oben abfließt, kommt bei dir als Quelle an.` : 'Mehrere Spieler bilden einen Fluss: Was oben abfließt, kommt unten als Quelle an.'}</small></button>
         ${auto ? `<button class="start-card" data-act="continue">${icon('play')}<b>Weiterspielen</b><small>${metaText(auto)}</small></button>` : ''}
         <button class="start-card" data-act="saves">${icon('save')}<b>Spielstände</b><small>Laden aus dem Browser oder der Cloud.</small></button>
@@ -234,6 +243,7 @@ export class Menu {
         <button class="btn" data-act="resume">${icon('play')}Weiterspielen</button>
         <button class="btn secondary" data-act="saves">${icon('save')}Spielstände speichern und laden</button>
         <button class="btn secondary" data-act="river">${icon('river')}Flusskette${this.cb.riverLink() ? `: ${esc(this.cb.riverLink()!.name)}` : ''}</button>
+        <button class="btn secondary" data-act="achievements">${icon('medal')}Errungenschaften</button>
         <button class="btn secondary" data-act="settings">${icon('settings')}Einstellungen</button>
         <button class="btn secondary" data-act="main">${icon('menu')}Hauptmenü</button>
       </div>`,
@@ -354,6 +364,42 @@ export class Menu {
         this.riverBusy = false;
         if (this.view === 'river') this.showRiver();
       });
+  }
+
+  // --- Errungenschaften ---------------------------------------------------------
+
+  showAchievements(): void {
+    const from: MenuView = this.view === 'start' || (this.view === 'achievements' && this.back === 'start') ? 'start' : 'menu';
+    this.view = 'achievements';
+    this.back = from;
+    const st = this.cb.achievements();
+    const groups = GROUP_ORDER.map((g) => {
+      const list = ACHIEVEMENTS.filter((a) => a.group === g);
+      const done = list.filter((a) => st.unlocked[a.id]).length;
+      const rows = list
+        .map((a) => {
+          const at = st.unlocked[a.id];
+          return `<div class="ach${at ? ' done' : ''}">${icon(at ? 'medal' : 'lock')}<div><b>${a.title}</b><small>${a.text}${at ? ` Erreicht am ${new Date(at).toLocaleDateString('de-DE')}.` : ''}</small></div></div>`;
+        })
+        .join('');
+      return `<h3 class="ach-group">${GROUP_NAMES[g]}<span>${done} / ${list.length}</span></h3><div class="ach-list">${rows}</div>`;
+    }).join('');
+    this.dialog(
+      'Errungenschaften',
+      `<p class="note">${unlockedCount(st)} von ${ACHIEVEMENT_COUNT} erreicht. Sie gelten für diesen Browser, über alle Spiele hinweg.</p>
+      ${groups}
+      <div class="btn-row"><button class="btn secondary" data-act="back">Zurück</button></div>`,
+      'ach-dialog',
+    );
+  }
+
+  /** Einblendung, wenn eine Errungenschaft erreicht ist */
+  toastAchievement(title: string): void {
+    const el = document.createElement('div');
+    el.className = 'toast ach';
+    el.innerHTML = `${icon('medal')}<span><small>Errungenschaft</small><b>${esc(title)}</b></span>`;
+    this.toasts.appendChild(el);
+    setTimeout(() => el.remove(), 6000);
   }
 
   showDaily(): void {
@@ -663,6 +709,15 @@ export class Menu {
     });
   }
 
+  /** Regler in den Einstellungen */
+  private onInput(e: Event): void {
+    const input = (e.target as HTMLElement).closest('input[type="range"][data-setting]') as HTMLInputElement | null;
+    if (!input) return;
+    const s = this.cb.getSettings();
+    (s as unknown as Record<string, number>)[input.dataset.setting!] = Number(input.value) / 100;
+    this.cb.onSettings(s);
+  }
+
   private onChange(e: Event): void {
     const sel = (e.target as HTMLElement).closest('.map-goal') as HTMLSelectElement | null;
     if (!sel) return;
@@ -716,6 +771,7 @@ export class Menu {
       'Einstellungen',
       `<label class="setting"><span>Miniatur-Unschärfe und Farbstimmung (Tilt-Shift)<br><small class="note">Ausschalten, wenn das Bild ruckelt.</small></span><input type="checkbox" data-setting="tiltShift" ${s.tiltShift ? 'checked' : ''}></label>
       <label class="setting"><span>Schatten</span><input type="checkbox" data-setting="shadows" ${s.shadows ? 'checked' : ''}></label>
+      <label class="setting"><span>Lautstärke<br><small class="note">Wasser, Regen, Bauen und Meldungen. Ganz links ist aus.</small></span><span class="range">${icon('sound')}<input type="range" min="0" max="100" step="5" data-setting="volume" value="${Math.round(s.volume * 100)}"></span></label>
       <div class="btn-row"><button class="btn secondary" data-act="back">Zurück</button></div>`,
     );
   }
@@ -784,9 +840,11 @@ export class Menu {
     const target = e.target as HTMLElement;
     const input = target.closest('input[data-setting]') as HTMLInputElement | null;
     if (input) {
-      const s = this.cb.getSettings();
-      (s as unknown as Record<string, boolean>)[input.dataset.setting!] = input.checked;
-      this.cb.onSettings(s);
+      if (input.type === 'checkbox') {
+        const s = this.cb.getSettings();
+        (s as unknown as Record<string, boolean>)[input.dataset.setting!] = input.checked;
+        this.cb.onSettings(s);
+      }
       return;
     }
     const btn = target.closest('[data-act]') as HTMLElement | null;
@@ -890,6 +948,9 @@ export class Menu {
         break;
       case 'river-refresh':
         this.riverAction(() => this.cb.onRiverRefresh());
+        break;
+      case 'achievements':
+        this.showAchievements();
         break;
       case 'river-create': {
         this.saveNameInput();

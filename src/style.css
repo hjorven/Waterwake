@@ -978,6 +978,116 @@ button.start-card:hover {
   background: var(--bad);
 }
 
+.toast.ach {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 2px solid var(--accent-2);
+  padding: 8px 16px 8px 12px;
+}
+
+.toast.ach svg {
+  width: 26px;
+  height: 26px;
+  color: var(--accent-2);
+}
+
+.toast.ach span {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.toast.ach small {
+  color: var(--ink-soft);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Errungenschaften */
+.dialog.ach-dialog {
+  width: min(100%, 680px);
+}
+
+.ach-group {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin: 14px 0 6px;
+  font-size: 15px;
+}
+
+.ach-group span {
+  color: var(--ink-soft);
+  font-weight: 400;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ach-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 6px;
+}
+
+.ach {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--paper-2);
+  opacity: 0.6;
+}
+
+.ach.done {
+  opacity: 1;
+  background: var(--paper);
+  border: 1px solid var(--wood-2);
+}
+
+.ach svg {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-top: 2px;
+  color: var(--ink-soft);
+}
+
+.ach.done svg {
+  color: var(--accent-2);
+}
+
+.ach b {
+  display: block;
+  font-size: 14px;
+}
+
+.ach small {
+  color: var(--ink-soft);
+  line-height: 1.3;
+}
+
+.setting .range {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.setting .range svg {
+  width: 20px;
+  height: 20px;
+  color: var(--ink-soft);
+}
+
+.setting input[type='range'] {
+  width: 150px;
+  accent-color: var(--accent-2);
+}
+
 @media (max-width: 720px) {
   .goal {
     display: none;
