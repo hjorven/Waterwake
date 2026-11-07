@@ -21,6 +21,8 @@ export type Goal =
       /** und zwar ununterbrochen so viele Tage lang */
       days: number;
       population: number;
+      /** und dieses Jahr muss erreicht sein (fehlt: ab dem ersten) */
+      year?: number;
     };
 
 export interface Scenario {
@@ -210,9 +212,9 @@ export const HOCHLAND: Scenario = {
   intro: [
     'Hoch oben versiegt der Fluss jeden Sommer für Wochen. Die Alten der Molche erzählen von einem See, der hier einmal das ganze Tal füllte.',
     'Wasser halten ist alles: Dämme aus Stein stauen den Fluss, und wo das Wasser steht, bleiben Höhlen nass und Algen wachsen.',
-    'Staut einen See von vierzig Zellen mit anderthalb Tiefe und haltet ihn drei Tage lang durch Normalzeit oder Dürre, mit sechzehn Molchen an seinem Ufer.',
+    'Staut einen See von vierzig Zellen mit anderthalb Tiefe und haltet ihn drei Tage lang durch Normalzeit oder Dürre, mit sechzehn Molchen an seinem Ufer. Das zählt erst im zweiten Jahr, die erste lange Dürre müsst ihr überstehen.',
   ],
-  goal: { kind: 'stausee', cells: 40, depth: 1.5, days: 3, population: 16 },
+  goal: { kind: 'stausee', cells: 40, depth: 1.5, days: 3, population: 16, year: 2 },
   terrain: { gorge: 1.4, gorgeAt: 0.5, bedTop: 8, drop: 6, halfBed: 1.8, slope: 0.5, hills: 10, hillNoise: 6, sourceRate: 1.1, meander: [0.1, 0.05] },
   seasons: {
     normal: [8, 12],
@@ -295,5 +297,5 @@ export function goalText(goal: Goal | null, species: Species = 'otter'): string 
   const many = SPECIES[species].many;
   if (!goal) return 'Kein Ziel, freies Spiel';
   if (goal.kind === 'clan') return `${goal.population} ${many} und das Jahr ${goal.year} erreichen`;
-  return `einen See mit ${goal.cells} Zellen von ${goal.depth.toLocaleString('de-DE')} Tiefe ${goal.days} Tage halten, mit ${goal.population} ${species === 'otter' ? 'Ottern' : many}`;
+  return `einen See mit ${goal.cells} Zellen von ${goal.depth.toLocaleString('de-DE')} Tiefe ${goal.days} Tage halten, mit ${goal.population} ${species === 'otter' ? 'Ottern' : many}${goal.year && goal.year > 1 ? ` im Jahr ${goal.year}` : ''}`;
 }
