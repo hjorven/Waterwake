@@ -198,6 +198,13 @@ export class WaterSim {
     return s;
   }
 
+  /** Zahl der Zellen, die mindestens `min` tief unter Wasser stehen (Stausee-Ziel) */
+  deepCells(min: number): number {
+    let n = 0;
+    for (let i = 0; i < this.depth.length; i++) if (this.depth[i] >= min) n++;
+    return n;
+  }
+
   /** Höchste Verschmutzung auf der Karte (für Anzeige und Speichern) */
   maxPollution(): number {
     let m = 0;

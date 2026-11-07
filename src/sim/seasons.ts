@@ -36,6 +36,25 @@ export interface SeasonsSave {
 /** Ab diesem Jahr folgt auf die Schneeschmelze eine Schlammflut */
 export const MUD_YEAR = 3;
 
+/** Jahreslauf einer Karte: Dauer der Phasen in Tagen und Stärke der Flutwelle */
+export interface SeasonProfile {
+  normal: [number, number];
+  schmelze: [number, number];
+  schlamm: [number, number];
+  /** Dürre: Dauer in Jahr 1, Zuwachs je Jahr und Obergrenzen */
+  duerre: { min: number; max: number; growMin: number; growMax: number; capMin: number; capMax: number };
+  /** Flutwelle der Schmelze: Spitze über dem Grundwert 3 in Jahr 1, Zuwachs je Jahr, Obergrenze */
+  melt: { peak: number; grow: number; cap: number };
+}
+
+export const DEFAULT_SEASONS: SeasonProfile = {
+  normal: [8, 14],
+  schmelze: [2, 4],
+  schlamm: [2, 5],
+  duerre: { min: 4, max: 8, growMin: 1, growMax: 2, capMin: 10, capMax: 12 },
+  melt: { peak: 2, grow: 1.5, cap: 5 },
+};
+
 /**
  * Jahreslauf: Normalzeit, Schneeschmelze, (ab Jahr 3 Schlammflut),
  * Normalzeit, Dürre. Die Dürre wird mit den Jahren länger, die Flutwelle
@@ -55,11 +74,13 @@ export class Seasons {
   nextMin: number;
   nextMax: number;
   private readonly rnd: Rng;
+  private readonly profile: SeasonProfile;
   private slot = 0;
   private nextSlot = 1;
 
-  constructor(seed: number) {
+  constructor(seed: number, profile: SeasonProfile = DEFAULT_SEASONS) {
     this.rnd = mulberry32(seed ^ 0x5eed);
+    this.profile = profile;
     // Die erste Normalzeit ist fest, damit der Start planbar bleibt
     this.phaseEnd = 10 * DAY;
     this.nextLength = this.lengthFor('schmelze');
@@ -78,17 +99,20 @@ export class Seasons {
 
   private lengthFor(w: Weather): number {
     const r = this.rnd();
+    const p = this.profile;
+    const span = (lo: number, hi: number) => lo + Math.floor(r * (Math.max(lo, hi) - lo + 1));
     switch (w) {
       case 'normal':
-        return 8 + Math.floor(r * 7);
+        return span(p.normal[0], p.normal[1]);
       case 'schmelze':
-        return 2 + Math.floor(r * 3);
+        return span(p.schmelze[0], p.schmelze[1]);
       case 'schlamm':
-        return 2 + Math.floor(r * 4);
+        return span(p.schlamm[0], p.schlamm[1]);
       case 'duerre': {
-        const min = Math.min(10, 3 + this.year);
-        const max = Math.min(12, 6 + this.year * 2);
-        return min + Math.floor(r * (max - min + 1));
+        const d = p.duerre;
+        const min = Math.min(d.capMin, d.min + (this.year - 1) * d.growMin);
+        const max = Math.min(d.capMax, d.max + (this.year - 1) * d.growMax);
+        return span(min, max);
       }
     }
   }
@@ -123,7 +147,8 @@ export class Seasons {
     if (this.phase !== 'schmelze') return 1;
     const len = Math.max(1, this.phaseEnd - this.phaseStart);
     const p = Math.max(0, Math.min(1, (this.time - this.phaseStart) / len));
-    const peak = Math.min(5, 2 + 1.5 * (this.year - 1));
+    const m = this.profile.melt;
+    const peak = Math.min(m.cap, m.peak + m.grow * (this.year - 1));
     return 3 + peak * Math.sin(Math.PI * p);
   }
 

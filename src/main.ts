@@ -2,13 +2,15 @@ import * as THREE from 'three';
 import './style.css';
 import { BUILDINGS, type BuildingId } from './data/buildings';
 import { costText } from './data/goods';
-import { freeScenario, OTTERTAL, scenarioById } from './data/maps';
+import { campaignIndex, freeScenario, OTTERTAL, scenarioById } from './data/maps';
 import { TECH_FOR, TECHS, type TechId } from './data/tech';
 import { cloudConnect, cloudDelete, cloudDownload, cloudList, cloudUpload } from './online/cloud';
 import {
   deleteLocalSave,
   listLocalSaves,
+  loadCampaign,
   loadSettings,
+  markCampaignWon,
   readLocalSave,
   saveSettings,
   writeLocalSave,
@@ -227,6 +229,7 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
       applyWeatherLook(stats.weather);
       if (stats.outcome !== shownOutcome) {
         shownOutcome = stats.outcome;
+        if (stats.outcome === 'won' && campaignIndex(stats.scenario) >= 0) markCampaignWon(stats.scenario);
         if (stats.outcome && !menu.open) {
           setSpeed(0);
           menu.showEnd(stats);
@@ -339,6 +342,7 @@ const menu = new Menu(app, {
   },
   onCloudDelete: (slot) => cloudDelete(slot),
   getSettings: () => ({ ...settings }),
+  campaignWon: () => loadCampaign(),
   onSettings: (s) => {
     Object.assign(settings, s);
     saveSettings(settings);

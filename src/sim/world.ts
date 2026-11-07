@@ -92,8 +92,12 @@ export interface WorldStats {
   lostToFlood: number;
   outcome: Outcome;
   goal: Goal | null;
+  /** Stausee-Ziel: Zellen mit der nötigen Tiefe und Tage, die der See schon gehalten wird */
+  deepCells: number;
+  goalDays: number;
   scenario: string;
   scenarioName: string;
+  seed: number;
 }
 
 function plants(n: number, what: string): string {
@@ -144,6 +148,8 @@ export class World implements Env {
   outcome: Outcome = null;
   /** vom Hochwasser zerstörte Gebäude */
   lostToFlood = 0;
+  /** Stausee-Ziel: Sekunden, die der See ununterbrochen groß genug war */
+  goalHeld = 0;
   readonly rnd: Rng;
   private moistTimer = 0;
   private growTimer = 0;
@@ -175,7 +181,7 @@ export class World implements Env {
     this.buildings = new Buildings(map.w, map.h);
     this.veg = new Vegetation(map.w, map.h);
     this.setWeather('normal');
-    this.seasons = new Seasons(seed);
+    this.seasons = new Seasons(seed, this.scenario.seasons);
     this.path = new Pathfinder(
       map.w,
       map.h,
@@ -193,7 +199,7 @@ export class World implements Env {
   }
 
   static generate(w: number, h: number, seed: number, scenario?: Scenario): World {
-    return new World(generateValley(w, h, seed), seed, scenario);
+    return new World(generateValley(w, h, seed, scenario?.terrain), seed, scenario);
   }
 
   static fromScenario(s: Scenario): World {
@@ -671,10 +677,31 @@ export class World implements Env {
       return;
     }
     const goal = this.scenario.goal;
-    if (this.outcome === null && goal && pop >= goal.population && this.seasons.year >= goal.year) {
+    if (!goal) return;
+    if (goal.kind === 'stausee' && (this.weather === 'normal' || this.weather === 'duerre')) {
+      // jede Sekunde geprüft: der See muss ununterbrochen groß genug bleiben;
+      // in Schmelze und Schlammflut steht das Wasser ohnehin hoch, da zählt nichts
+      if (this.water.deepCells(goal.depth) >= goal.cells) {
+        if (this.goalHeld === 0) this.log('Der Stausee ist groß genug. Haltet ihn, bis das Ziel erreicht ist.');
+        this.goalHeld += 1;
+      } else {
+        if (this.goalHeld > 0 && this.outcome === null) this.log('Der Stausee ist geschrumpft, die Zählung beginnt von vorn.');
+        this.goalHeld = 0;
+      }
+    }
+    if (this.outcome !== null) return;
+    if (goal.kind === 'clan' && pop >= goal.population && this.seasons.year >= goal.year) {
       this.outcome = 'won';
       this.log(`Ziel erreicht: ${pop} Otter im Jahr ${this.seasons.year}. Der Clan ist im Tal zuhause.`);
+    } else if (goal.kind === 'stausee' && this.goalHeld >= goal.days * DAY && pop >= goal.population) {
+      this.outcome = 'won';
+      this.log(`Ziel erreicht: Der See in der Schlucht hält, ${pop} Otter leben an seinem Ufer.`);
     }
+  }
+
+  /** Stand des Stausee-Ziels in Tagen */
+  goalDays(): number {
+    return this.goalHeld / DAY;
   }
 
   stats(): WorldStats {
@@ -708,6 +735,9 @@ export class World implements Env {
       lostToFlood: this.lostToFlood,
       outcome: this.outcome,
       goal: this.scenario.goal,
+      deepCells: this.scenario.goal?.kind === 'stausee' ? this.water.deepCells(this.scenario.goal.depth) : 0,
+      goalDays: this.goalDays(),
+      seed: this.seed,
       scenario: this.scenario.id,
       scenarioName: this.scenario.name,
     };

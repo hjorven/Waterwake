@@ -376,7 +376,7 @@ describe('Siedlung', { timeout: 30000 }, () => {
   it('Ziel erreicht und Clan ausgelöscht werden gemeldet', () => {
     const { world } = setup();
     expect(world.scenario.goal).toBeNull();
-    world.scenario = { ...world.scenario, goal: { population: 6, year: 1 } };
+    world.scenario = { ...world.scenario, goal: { kind: 'clan', population: 6, year: 1 } };
     runDays(world, 0.1);
     expect(world.outcome).toBe('won');
     for (const c of world.citizens.list) c.water = 0.001;

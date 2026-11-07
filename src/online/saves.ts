@@ -103,6 +103,36 @@ export function saveSettings(settings: Settings): void {
   }
 }
 
+const CAMPAIGN_KEY = 'waterwake.campaign';
+
+/** Gewonnene Kampagnenkarten (Ids) */
+export function loadCampaign(): string[] {
+  const s = storage();
+  if (!s) return [];
+  try {
+    const raw = s.getItem(CAMPAIGN_KEY);
+    const list = raw ? (JSON.parse(raw) as unknown) : [];
+    return Array.isArray(list) ? list.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Sieg auf einer Karte merken; gibt die neue Liste zurück */
+export function markCampaignWon(id: string): string[] {
+  const won = loadCampaign();
+  if (!won.includes(id)) won.push(id);
+  const s = storage();
+  if (s) {
+    try {
+      s.setItem(CAMPAIGN_KEY, JSON.stringify(won));
+    } catch {
+      // kein Platz: der Fortschritt gilt nur für diese Sitzung
+    }
+  }
+  return won;
+}
+
 export function formatSavedAt(ms: number): string {
   const d = new Date(ms);
   return d.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
