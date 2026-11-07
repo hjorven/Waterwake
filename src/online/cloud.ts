@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { makeCode, validateMap, type CustomMap, type SharedMapInfo } from '../data/custom';
 import type { SaveGame, SaveMeta } from '../sim/save';
 import type { SaveEntry } from './saves';
 
@@ -207,4 +208,92 @@ export async function dailySubmit(key: string, name: string, score: number, days
   }
   const best = improved ? score : old;
   return { score: best, rank: await dailyRank(c, key, best), total: await dailyTotal(c, key), improved };
+}
+
+// --- Geteilte Karten in ww_maps -----------------------------------------------
+
+interface MapRow {
+  code: string;
+  name: string;
+  author: string;
+  w: number;
+  h: number;
+  ground: string;
+  sources: unknown;
+  sinks: unknown;
+  start: number;
+  goal: unknown;
+  plays: number;
+  created_at: string;
+}
+
+/** Karte hochladen; gibt den Code aus sechs Zeichen zurück. Legt bei Bedarf ein anonymes Konto an */
+export async function mapUpload(map: CustomMap): Promise<string> {
+  const c = await client();
+  const userId = await cloudConnect();
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const code = makeCode();
+    const { error } = await c.from('ww_maps').insert({
+      code,
+      user_id: userId,
+      name: map.name,
+      author: map.author,
+      w: map.w,
+      h: map.h,
+      ground: map.ground,
+      sources: map.sources,
+      sinks: map.sinks,
+      start: map.start,
+      goal: map.goal,
+    });
+    if (!error) return code;
+    // 23505 = Code schon vergeben, dann einen neuen würfeln
+    if (error.code !== '23505') throw new Error(error.message);
+  }
+  throw new Error('Kein freier Code gefunden, bitte nochmal versuchen');
+}
+
+export async function mapDownload(code: string): Promise<CustomMap> {
+  const c = await client();
+  const { data, error } = await c.from('ww_maps').select('code,name,author,w,h,ground,sources,sinks,start,goal,plays,created_at').eq('code', code).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error(`Keine Karte mit dem Code ${code}`);
+  const r = data as MapRow;
+  const map = validateMap({
+    id: `geteilt:${r.code}`,
+    code: r.code,
+    name: r.name,
+    author: r.author,
+    w: r.w,
+    h: r.h,
+    ground: r.ground,
+    sources: r.sources,
+    sinks: r.sinks,
+    start: r.start,
+    goal: r.goal,
+    createdAt: Date.parse(r.created_at),
+  });
+  if (!map) throw new Error('Die Karte ist beschädigt');
+  return map;
+}
+
+/** Die neuesten geteilten Karten; lesen geht ohne Konto */
+export async function mapList(limit = 10): Promise<SharedMapInfo[]> {
+  const c = await client();
+  const { data, error } = await c.from('ww_maps').select('code,name,author,plays,created_at').order('created_at', { ascending: false }).limit(limit);
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as Pick<MapRow, 'code' | 'name' | 'author' | 'plays' | 'created_at'>[]).map((r) => ({
+    code: r.code,
+    name: r.name,
+    author: r.author,
+    plays: r.plays,
+    createdAt: Date.parse(r.created_at),
+  }));
+}
+
+/** Zähler der Spiele einer geteilten Karte erhöhen */
+export async function mapPlayed(code: string): Promise<void> {
+  const c = await client();
+  const { error } = await c.rpc('ww_map_played', { p_code: code });
+  if (error) throw new Error(error.message);
 }

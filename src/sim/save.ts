@@ -1,4 +1,6 @@
+import { customScenario, type CustomMap } from '../data/custom';
 import { freeScenario, scenarioById } from '../data/maps';
+import { decodeBytes, decodeFloats, encodeBytes, encodeFloats } from './codec';
 import type { TechId } from '../data/tech';
 import type { SavedBuilding } from './buildings';
 import type { CitizensSave } from './citizens';
@@ -7,7 +9,7 @@ import type { SeasonsSave } from './seasons';
 import type { Source } from './water';
 import { World, type Outcome, type Weather } from './world';
 
-export const SAVE_VERSION = 4;
+export const SAVE_VERSION = 5;
 
 /** Kompletter Spielstand, Raster als Base64 */
 export interface SaveGame {
@@ -30,6 +32,8 @@ export interface SaveGame {
   lostToFlood: number;
   /** Stausee-Ziel: Sekunden, die der See schon gehalten wird (ab Version 4) */
   goalHeld?: number;
+  /** eigene oder geteilte Karte, eingebettet, damit sie ohne Cloud wieder lädt (ab Version 5) */
+  custom?: CustomMap;
   ground: string;
   struct: string;
   gate: string;
@@ -60,31 +64,6 @@ export interface SaveMeta {
   savedAt: number;
 }
 
-export function encodeBytes(u8: Uint8Array): string {
-  let s = '';
-  const chunk = 0x2000;
-  for (let i = 0; i < u8.length; i += chunk) {
-    s += String.fromCharCode.apply(null, Array.from(u8.subarray(i, i + chunk)));
-  }
-  return btoa(s);
-}
-
-export function decodeBytes(s: string): Uint8Array {
-  const bin = atob(s);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
-}
-
-export function encodeFloats(f: Float32Array): string {
-  return encodeBytes(new Uint8Array(f.buffer, f.byteOffset, f.byteLength));
-}
-
-export function decodeFloats(s: string): Float32Array {
-  const u = decodeBytes(s);
-  return new Float32Array(u.buffer, 0, u.byteLength >> 2);
-}
-
 export function serializeWorld(world: World, name = ''): { data: SaveGame; meta: SaveMeta } {
   const season = world.seasons.info();
   const data: SaveGame = {
@@ -104,6 +83,7 @@ export function serializeWorld(world: World, name = ''): { data: SaveGame; meta:
     outcome: world.outcome,
     lostToFlood: world.lostToFlood,
     goalHeld: world.goalHeld,
+    custom: world.scenario.custom,
     ground: encodeBytes(world.ground),
     struct: encodeBytes(world.struct),
     gate: encodeBytes(world.gate),
@@ -152,7 +132,7 @@ export function restoreWorld(s: SaveGame): World {
   const sink = decodeBytes(s.sink);
   const sinks: number[] = [];
   for (let i = 0; i < n; i++) if (sink[i]) sinks.push(i);
-  const scenario = s.scenario === 'frei' ? freeScenario(s.seed, s.w, s.h) : scenarioById(s.scenario, s.seed);
+  const scenario = s.custom ? customScenario(s.custom) : s.scenario === 'frei' ? freeScenario(s.seed, s.w, s.h) : scenarioById(s.scenario, s.seed);
   const world = new World({ w: s.w, h: s.h, ground: decodeBytes(s.ground), sources: s.sources.map((x) => ({ ...x })), sinks }, s.seed, scenario);
   world.struct.set(decodeBytes(s.struct));
   world.gate.set(decodeBytes(s.gate));

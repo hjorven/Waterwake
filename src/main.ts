@@ -2,13 +2,16 @@ import * as THREE from 'three';
 import './style.css';
 import { BUILDINGS, type BuildingId } from './data/buildings';
 import { costText } from './data/goods';
+import { CUSTOM_ID, coreFromData, customScenario, flatMap, isMapCode, newMapId, normalizeCode, type CustomMap, type MapCore } from './data/custom';
 import { DAILY_ID, dailyScore } from './data/daily';
 import { campaignIndex, freeScenario, OTTERTAL, scenarioById, type Scenario } from './data/maps';
 import { TECH_FOR, TECHS, type TechId } from './data/tech';
-import { cloudConnect, cloudDelete, cloudDownload, cloudHasAccount, cloudList, cloudUpload, dailyBoard, dailySubmit, type DailyResult } from './online/cloud';
+import { cloudConnect, cloudDelete, cloudDownload, cloudHasAccount, cloudList, cloudUpload, dailyBoard, dailySubmit, mapDownload, mapList, mapPlayed, mapUpload, type DailyResult } from './online/cloud';
 import {
   deleteLocalSave,
+  deleteMap,
   listLocalSaves,
+  loadMaps,
   loadCampaign,
   loadName,
   loadSettings,
@@ -16,6 +19,7 @@ import {
   readLocalSave,
   saveName as savePlayerName,
   saveSettings,
+  upsertMap,
   writeLocalSave,
   type Settings,
 } from './online/saves';
@@ -26,6 +30,7 @@ import { PostFX } from './render/postfx';
 import { TerrainRenderer } from './render/terrain';
 import { WaterRenderer } from './render/water';
 import { canPlaceAt } from './sim/buildings';
+import { generateValley } from './sim/terrain';
 import type { BuildingSnap, FromWorker, SimStats, ToWorker } from './sim/protocol';
 import type { SaveGame, SaveMeta } from './sim/save';
 import type { Outcome, Tool, Weather } from './sim/world';
@@ -158,6 +163,12 @@ rig.heightAt = (x, z) => {
   return ground[i] + struct[i];
 };
 let stats: SimStats | null = null;
+// Karteneditor
+let editorMode = false;
+let editing: CustomMap | null = null;
+let sources: { index: number; rate: number }[] = [];
+let startCell = -1;
+let mapWaiter: ((m: MapCore) => void) | null = null;
 let running = false;
 let shownOutcome: Outcome = null;
 let pendingIntro: Scenario | null = null;
@@ -181,7 +192,15 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
       hud.reset();
       hud.setVisible(true);
       running = true;
-      if (msg.loaded) {
+      editorMode = msg.editor;
+      if (!msg.editor) editing = null;
+      hud.setEditor(msg.editor);
+      updateMarks();
+      if (msg.editor) {
+        menu.hide();
+        setSpeed(1);
+        menu.toast('Editor: Boden formen, Quellen und Abfluss setzen. Esc öffnet das Menü zum Speichern.');
+      } else if (msg.loaded) {
         menu.hide();
         menu.toast('Spielstand geladen.');
         setSpeed(1);
@@ -202,6 +221,9 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
       struct = msg.struct;
       gate = msg.gate;
       sink = msg.sink;
+      sources = msg.sources;
+      startCell = msg.start;
+      updateMarks();
       terrain.update(ground, struct);
       water.setTerrain(ground, struct);
       instances.setTerrain(ground, struct);
@@ -243,8 +265,72 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
     case 'saved':
       onSaved(msg.slot, msg.data, msg.meta);
       break;
+    case 'map':
+      mapWaiter?.(msg.map);
+      mapWaiter = null;
+      break;
   }
 };
+
+// --- Karteneditor: Markierungen für Quellen, Abfluss und Startlager ------------
+const marks = new THREE.Group();
+scene.add(marks);
+const sourceGeo = new THREE.CylinderGeometry(0.45, 0.3, 0.7, 12);
+const sourceMat = new THREE.MeshLambertMaterial({ color: 0xbff3ff, emissive: 0x2a8fb0 });
+const sinkGeo = new THREE.BoxGeometry(0.9, 0.12, 0.9);
+const sinkMat = new THREE.MeshLambertMaterial({ color: 0x1b3a5c });
+const startGeo = new THREE.BoxGeometry(2, 0.3, 2);
+const startMat = new THREE.MeshLambertMaterial({ color: 0xffd45a });
+
+function updateMarks(): void {
+  marks.clear();
+  marks.visible = editorMode;
+  if (!editorMode || ground.length !== MAP_W * MAP_H) return;
+  for (const s of sources) {
+    const m = new THREE.Mesh(sourceGeo, sourceMat);
+    m.position.set((s.index % MAP_W) + 0.5, ground[s.index] + 0.35, ((s.index / MAP_W) | 0) + 0.5);
+    marks.add(m);
+  }
+  for (let i = 0; i < sink.length; i++) {
+    if (!sink[i]) continue;
+    const m = new THREE.Mesh(sinkGeo, sinkMat);
+    m.position.set((i % MAP_W) + 0.5, ground[i] + 0.08, ((i / MAP_W) | 0) + 0.5);
+    marks.add(m);
+  }
+  if (startCell >= 0) {
+    const m = new THREE.Mesh(startGeo, startMat);
+    m.position.set((startCell % MAP_W) + 1, ground[startCell] + 0.15, ((startCell / MAP_W) | 0) + 1);
+    marks.add(m);
+  }
+}
+
+/** Eigene oder geteilte Karte spielen oder im Editor öffnen */
+function startCustom(map: CustomMap, editor: boolean): void {
+  const sc = customScenario(map);
+  pendingIntro = editor ? null : sc;
+  running = false;
+  editing = editor ? map : null;
+  send({ type: 'init', scenario: CUSTOM_ID, seed: sc.seed, w: sc.w, h: sc.h, custom: map, editor, freeBuild: false, unlockAll: params.has('alles') });
+  speed = 1;
+  if (!editor && map.id.startsWith('geteilt:') && map.code) mapPlayed(map.code).catch(() => undefined);
+}
+
+/** Editor mit einem Zufallstal (Seed) oder einer flachen Karte (null) */
+function startEditor(seed: number | null): void {
+  const core = seed === null ? flatMap(96, 96) : coreFromData(generateValley(96, 96, seed));
+  startCustom({ id: newMapId(), name: seed === null ? 'Flache Karte' : `Tal ${seed}`, author: loadName(), goal: null, createdAt: Date.now(), ...core }, true);
+}
+
+function requestMap(): Promise<MapCore> {
+  return new Promise((resolve, reject) => {
+    if (!running) {
+      reject(new Error('Kein Editor offen'));
+      return;
+    }
+    mapWaiter = resolve;
+    send({ type: 'exportMap' });
+  });
+}
 
 // --- Spielsteuerung -----------------------------------------------------------
 let speed = 1;
@@ -389,6 +475,40 @@ const menu = new Menu(app, {
   dailyBoard: (key) => dailyBoard(key),
   dailyScore: () => currentDaily(),
   onDailySubmit: (name) => submitDaily(name),
+  listMaps: () => loadMaps(),
+  onEditorNew: (seed) => {
+    menu.hide();
+    startEditor(seed);
+  },
+  onEditorOpen: (map) => {
+    menu.hide();
+    startCustom(map, true);
+  },
+  onPlayMap: (map) => {
+    menu.hide();
+    startCustom(map, false);
+  },
+  onDeleteMap: (id) => deleteMap(id),
+  onMapExport: () => requestMap(),
+  onMapStore: (map) => {
+    const ok = upsertMap(map);
+    if (ok) editing = map;
+    return ok;
+  },
+  onMapShare: async (map) => {
+    const code = await mapUpload(map);
+    const shared = { ...map, code };
+    upsertMap(shared);
+    editing = shared;
+    return code;
+  },
+  onMapDownload: async (code) => {
+    const map = await mapDownload(code);
+    upsertMap(map);
+    return map;
+  },
+  onMapList: () => mapList(),
+  editing: () => editing,
   onSettings: (s) => {
     Object.assign(settings, s);
     saveSettings(settings);
@@ -514,7 +634,7 @@ function updatePreview(): void {
   } else if (mode.kind === 'tool') {
     const x = hoverCell % MAP_W;
     const y = (hoverCell / MAP_W) | 0;
-    const brush = mode.tool === 'schleuse' ? 1 : hud.brush;
+    const brush = mode.tool === 'schleuse' || mode.tool === 'start' ? 1 : hud.brush;
     cursor.visible = true;
     cursor.scale.set(brush * 2 - 1, 1, brush * 2 - 1);
     cursor.position.set(x + 0.5, ground[hoverCell] + struct[hoverCell] + 0.12, y + 0.5);
@@ -528,7 +648,7 @@ function applyTool(i: number): void {
     send({ type: 'demolish', cell: i });
     return;
   }
-  const brush = tool === 'schleuse' ? 1 : hud.brush;
+  const brush = tool === 'schleuse' || tool === 'start' ? 1 : hud.brush;
   const cells = cellsAround(i, brush).filter((c) => !painted.has(c));
   if (cells.length === 0) return;
   for (const c of cells) painted.add(c);
@@ -601,7 +721,7 @@ window.addEventListener('keydown', (e) => {
   switch (e.key) {
     case 'Escape':
       if (menu.open) {
-        if (menu.view === 'menu' || menu.view === 'saves' || menu.view === 'settings') {
+        if (menu.view === 'menu' || menu.view === 'saves' || menu.view === 'settings' || menu.view === 'mapsave') {
           menu.hide();
           resume();
         }
@@ -648,7 +768,29 @@ frame();
 // --- Start ------------------------------------------------------------------
 // Mit ?karte=ottertal, ?seed=12 oder ?frei geht es direkt los (auch für Tests),
 // sonst zeigt das Startmenü die Kampagnenkarte im Hintergrund.
-if (params.has('karte') || params.has('seed') || params.has('frei')) {
+if (params.has('editor')) {
+  pendingIntro = null;
+  startEditor(Number(params.get('seed')) || Math.floor(Math.random() * 9000) + 100);
+} else if (params.has('code')) {
+  // geteilte Karte per Link: die Karte kommt aus der Cloud, solange zeigt das Startbild; klappt es nicht, bleibt das Ottertal im Hintergrund
+  pendingIntro = null;
+  showStart();
+  const code = normalizeCode(params.get('code') ?? '');
+  const fallback = (why: string) => {
+    menu.toast(why, true);
+    send({ type: 'init', scenario: OTTERTAL.id, seed: OTTERTAL.seed, w: OTTERTAL.w, h: OTTERTAL.h });
+  };
+  if (isMapCode(code)) {
+    mapDownload(code).then(
+      (map) => {
+        upsertMap(map);
+        menu.hide();
+        startCustom(map, false);
+      },
+      (err: Error) => fallback(`Karte ${code}: ${err.message}`),
+    );
+  } else fallback('Der Code im Link ist ungültig.');
+} else if (params.has('karte') || params.has('seed') || params.has('frei')) {
   const karte = params.get('karte');
   const seed = Number(params.get('seed')) || OTTERTAL.seed;
   startGame(karte && karte !== 'frei' ? karte : 'frei', seed, params.has('frei'));
@@ -663,6 +805,11 @@ if (params.has('karte') || params.has('seed') || params.has('frei')) {
 (window as unknown as { __waterwake: unknown }).__waterwake = {
   getStats: () => stats,
   getDaily: () => currentDaily(),
+  getEditing: () => editing,
+  isEditor: () => editorMode,
+  exportMap: () => requestMap(),
+  startEditor: (seed: number | null) => startEditor(seed),
+  startCustom: (map: CustomMap, editor = false) => startCustom(map, editor),
   getBuildings: () => buildings,
   setMode: (m: Mode) => hud.setMode(m),
   place: (id: BuildingId, x: number, y: number) => {

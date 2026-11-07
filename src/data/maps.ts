@@ -1,5 +1,6 @@
 import type { SeasonProfile } from '../sim/seasons';
 import type { ValleyParams } from '../sim/terrain';
+import type { CustomMap } from './custom';
 import { DAILY_ID, dailyKey, dailyScenario, isDayKey } from './daily';
 
 /** Spielziel einer Karte. Freies Spiel hat keins. */
@@ -38,6 +39,8 @@ export interface Scenario {
   minutes?: number;
   /** Tipp für den Anfang, erscheint im Intro */
   hint?: string;
+  /** eigene oder geteilte Karte: das Gelände kommt aus dieser Karte statt aus dem Generator */
+  custom?: CustomMap;
 }
 
 export const OTTERTAL: Scenario = {

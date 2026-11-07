@@ -1,6 +1,8 @@
 /// <reference lib="webworker" />
 import { BUILDINGS } from '../data/buildings';
+import { customScenario } from '../data/custom';
 import { freeScenario, scenarioById } from '../data/maps';
+import { encodeBytes } from './codec';
 import { GOOD_CODE, STATE_CODE } from './citizens';
 import { CITIZEN_STRIDE, RAFT_STRIDE, type BuildingSnap, type FromWorker, type ToWorker } from './protocol';
 import { restoreWorld, serializeWorld } from './save';
@@ -46,6 +48,8 @@ function sendTerrain(): void {
     gate: world.gate.slice(),
     gateOpen: world.gateOpen.slice(),
     sink: world.water.sink.slice(),
+    sources: world.water.sources.map((s) => ({ index: s.index, rate: s.rate })),
+    start: world.start,
     version: world.terrainVersion,
   });
 }
@@ -119,7 +123,7 @@ function useWorld(w: World, loaded: boolean): void {
   acc = 0;
   inflow = outflow = evap = 0;
   lastAutoDay = w.seasons.info().day;
-  post({ type: 'ready', w: w.w, h: w.h, scenario: w.scenario.id, loaded });
+  post({ type: 'ready', w: w.w, h: w.h, scenario: w.scenario.id, loaded, editor: w.editor });
 }
 
 function tick(): void {
@@ -237,11 +241,14 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
   const msg = e.data;
   switch (msg.type) {
     case 'init': {
-      const scenario = msg.scenario === 'frei' ? freeScenario(msg.seed, msg.w, msg.h) : scenarioById(msg.scenario, msg.seed);
+      const scenario = msg.custom ? customScenario(msg.custom) : msg.scenario === 'frei' ? freeScenario(msg.seed, msg.w, msg.h) : scenarioById(msg.scenario, msg.seed);
       const w = World.fromScenario(scenario);
       w.freeBuild = !!msg.freeBuild;
+      w.editor = !!msg.editor;
+      // im Editor bleibt das Wetter normal, damit der Fluss ruhig fließt
+      if (w.editor) w.autoSeasons = false;
       if (msg.unlockAll) w.unlockAll();
-      w.settle();
+      w.settle(!w.editor);
       useWorld(w, false);
       break;
     }
@@ -255,6 +262,16 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
     case 'save':
       sendSave(msg.slot, msg.name);
       break;
+    case 'exportMap': {
+      if (!world) return;
+      const sinks: number[] = [];
+      for (let i = 0; i < world.water.sink.length; i++) if (world.water.sink[i]) sinks.push(i);
+      post({
+        type: 'map',
+        map: { w: world.w, h: world.h, ground: encodeBytes(world.ground), sources: world.water.sources.map((s) => ({ index: s.index, rate: s.rate })), sinks, start: world.start },
+      });
+      break;
+    }
     case 'edit':
       if (!world) return;
       for (const i of msg.cells) world.apply(msg.tool, i, msg.damHeight);

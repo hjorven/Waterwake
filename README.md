@@ -54,6 +54,17 @@ Spielen: https://hjorven.github.io/Waterwake/
   Wertung geht mit einem Spielernamen in die Bestenliste (Supabase-Tabelle
   `ww_daily`, nur die beste des Tages zählt), zu sehen im Startmenü unter
   Tageskarte. `?karte=tageskarte` öffnet die Karte von heute.
+- **M5, Teil 3: Karteneditor und Karten teilen**: Im Startmenü unter
+  Karteneditor entsteht ein Zufallstal oder eine flache Karte, die sich mit
+  den Geländewerkzeugen formen lässt; dazu kommen Quellen, Abflüsse und ein
+  Startlager. Das Wasser läuft dabei weiter, damit der Fluss sichtbar wird.
+  Über das Menü bekommt die Karte Name, Autor und Ziel, wird im Browser
+  gespeichert (bis zu 24 Karten unter `waterwake.maps`), per Probespiel
+  getestet und mit einem Code aus sechs Zeichen geteilt (Supabase-Tabelle
+  `ww_maps`). Andere geben den Code ein oder öffnen `?code=ABC234`; die Liste
+  der neuesten Karten steht im selben Menü. Spielstände auf eigenen Karten
+  betten die Karte ein (Spielstand Version 5). `?editor` oder
+  `?editor&seed=42` öffnet den Editor direkt.
 
 ## Steuerung
 
@@ -70,7 +81,8 @@ Spielen: https://hjorven.github.io/Waterwake/
 URL-Parameter: `?karte=ottertal` startet die Kampagne direkt, `?seed=12`
 startet ein freies Spiel auf einer anderen Karte, `?frei` macht Wasserbau
 kostenlos und schaltet alle Techniken frei, `?alles` schaltet nur die Techniken
-frei, `?flach` schaltet den Tilt-Shift-Effekt ab.
+frei, `?flach` schaltet den Tilt-Shift-Effekt ab, `?editor` (auch mit
+`&seed=42`) öffnet den Karteneditor, `?code=ABC234` lädt eine geteilte Karte.
 
 ## Spielstände in der Cloud
 

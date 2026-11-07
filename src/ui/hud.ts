@@ -1,5 +1,6 @@
 import { BUILDINGS, BUILDING_ORDER, CATEGORY_LABEL, DAM_WOOD_PER_LEVEL, DRINK_SPOTS, GATE_WOOD, type BuildingCategory, type BuildingId } from '../data/buildings';
 import { costText, FOODS, GOOD_LABEL, GOODS } from '../data/goods';
+import { EDITOR_SOURCE_RATE } from '../data/custom';
 import { DAILY_ID, dailyScore } from '../data/daily';
 import { goalText } from '../data/maps';
 import { TECH_FOR, TECH_ORDER, TECHS, type TechId } from '../data/tech';
@@ -16,7 +17,7 @@ export interface HudCallbacks {
   onMenu(): void;
 }
 
-type Tab = BuildingCategory | 'forschung' | 'wasserbau' | 'gelaende';
+type Tab = BuildingCategory | 'forschung' | 'wasserbau' | 'gelaende' | 'editor';
 
 const SVG_OPEN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
 
@@ -90,6 +91,9 @@ export const ICONS: Record<string, string> = {
   flood: '<path d="M3 8c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/><path d="M3 13c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/><path d="M3 18c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/>',
   trophy: '<path d="M8 4h8v5a4 4 0 0 1-8 0z"/><path d="M8 6H5v2a3 3 0 0 0 3 3M16 6h3v2a3 3 0 0 1-3 3"/><path d="M12 13v4M8 21h8M10 17h4v4"/>',
   calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M8 14h3M13 14h3M8 18h3"/>',
+  quelle: '<circle cx="12" cy="12" r="3"/><path d="M3 19c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/><path d="M12 3v4M7 5l2 2M17 5l-2 2"/>',
+  senke: '<path d="M3 6c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/><path d="M12 10v9"/><path d="M8 15l4 4 4-4"/>',
+  editor: '<path d="M4 20h16"/><path d="M6 20V10l4-4 4 4 4-4v14"/>',
 };
 
 export function icon(name: string): string {
@@ -167,6 +171,36 @@ const LAND_ITEMS: Item[] = [
     desc: 'Gebäude anklicken zeigt Einzelheiten. Rechte Maustaste dreht die Kamera.',
     mode: { kind: 'select' },
   },
+];
+
+/** Werkzeuge im Karteneditor: Boden formen, Quellen, Abfluss, Startlager */
+const EDITOR_ITEMS: Item[] = [
+  ...LAND_ITEMS.filter((it) => it.key !== 'select'),
+  {
+    key: 'quelle',
+    label: 'Quelle',
+    icon: 'quelle',
+    cost: `${EDITOR_SOURCE_RATE} Wasser je Sekunde`,
+    desc: 'Setzt oder entfernt eine Quelle. Mehrere Zellen nebeneinander geben einen stärkeren Fluss.',
+    mode: { kind: 'tool', tool: 'quelle' },
+  },
+  {
+    key: 'senke',
+    label: 'Abfluss',
+    icon: 'senke',
+    cost: 'am Kartenrand',
+    desc: 'Setzt oder entfernt einen Abfluss, in dem das Wasser die Karte verlässt. Am besten am tiefsten Ende des Flusses.',
+    mode: { kind: 'tool', tool: 'senke' },
+  },
+  {
+    key: 'start',
+    label: 'Startlager',
+    icon: 'ziel',
+    cost: '2 x 2 Felder, eben',
+    desc: 'Legt fest, wo der Clan mit seinem Lager beginnt. Ohne Markierung sucht das Spiel selbst eine Stelle am Fluss.',
+    mode: { kind: 'tool', tool: 'start' },
+  },
+  ...LAND_ITEMS.filter((it) => it.key === 'select'),
 ];
 
 function buildItems(category: BuildingCategory): Item[] {
@@ -258,6 +292,7 @@ export class Hud {
   private cards = new Map<string, HTMLElement>();
   private lastStatsKey = '';
   private lastCardsKey = '';
+  private editor = false;
 
   constructor(parent: HTMLElement, cb: HudCallbacks) {
     this.cb = cb;
@@ -333,16 +368,26 @@ export class Hud {
     }
     this.setSpeed(1);
 
-    const tabs: [Tab, string][] = [
-      ['siedlung', CATEGORY_LABEL.siedlung],
-      ['freude', CATEGORY_LABEL.freude],
-      ['versorgung', CATEGORY_LABEL.versorgung],
-      ['nahrung', CATEGORY_LABEL.nahrung],
-      ['strom', CATEGORY_LABEL.strom],
-      ['forschung', 'Forschung'],
-      ['wasserbau', 'Wasserbau'],
-      ['gelaende', 'Gelände'],
-    ];
+    this.buildTabs();
+    this.showTab('siedlung');
+    this.setMode({ kind: 'select' }, false);
+    this.updateOptions();
+  }
+
+  private buildTabs(): void {
+    const tabs: [Tab, string][] = this.editor
+      ? [['editor', 'Editor']]
+      : [
+          ['siedlung', CATEGORY_LABEL.siedlung],
+          ['freude', CATEGORY_LABEL.freude],
+          ['versorgung', CATEGORY_LABEL.versorgung],
+          ['nahrung', CATEGORY_LABEL.nahrung],
+          ['strom', CATEGORY_LABEL.strom],
+          ['forschung', 'Forschung'],
+          ['wasserbau', 'Wasserbau'],
+          ['gelaende', 'Gelände'],
+        ];
+    this.tabs.innerHTML = '';
     for (const [t, label] of tabs) {
       const btn = document.createElement('button');
       btn.className = 'tab';
@@ -351,9 +396,16 @@ export class Hud {
       btn.addEventListener('click', () => this.showTab(t));
       this.tabs.appendChild(btn);
     }
-    this.showTab('siedlung');
-    this.setMode({ kind: 'select' }, false);
-    this.updateOptions();
+  }
+
+  /** Karteneditor: nur die Editor-Werkzeuge zeigen, keine Vorräte */
+  setEditor(on: boolean): void {
+    if (this.editor !== on) {
+      this.editor = on;
+      this.root.classList.toggle('editor', on);
+      this.buildTabs();
+    }
+    this.showTab(on ? 'editor' : 'siedlung');
   }
 
   /** Alles ausblenden oder zeigen (Startmenü) */
@@ -373,7 +425,7 @@ export class Hud {
 
   private showTab(tab: Tab): void {
     for (const b of this.tabs.children) (b as HTMLElement).classList.toggle('active', (b as HTMLElement).dataset.tab === tab);
-    const list = tab === 'wasserbau' ? WATER_ITEMS : tab === 'gelaende' ? LAND_ITEMS : tab === 'forschung' ? researchItems() : buildItems(tab);
+    const list = tab === 'editor' ? EDITOR_ITEMS : tab === 'wasserbau' ? WATER_ITEMS : tab === 'gelaende' ? LAND_ITEMS : tab === 'forschung' ? researchItems() : buildItems(tab);
     this.items.innerHTML = '';
     this.cards.clear();
     for (const it of list) {
@@ -468,7 +520,7 @@ export class Hud {
   private updateOptions(): void {
     const m = this.mode;
     const isHeight = m.kind === 'tool' && (m.tool === 'damm' || m.tool === 'deich' || m.tool === 'schleuse');
-    const isBrush = m.kind === 'tool' && m.tool !== 'schleuse';
+    const isBrush = m.kind === 'tool' && m.tool !== 'schleuse' && m.tool !== 'start';
     this.options.querySelector('.opt-height')!.classList.toggle('hidden', !isHeight);
     this.options.querySelector('.opt-brush')!.classList.toggle('hidden', !isBrush);
     if (m.kind === 'tool' && m.tool === 'deich' && this.damHeight > MAX_DIKE) this.setDamHeight(MAX_DIKE);
@@ -479,7 +531,7 @@ export class Hud {
     if (m.kind === 'select') this.setHint('Gebäude anklicken für Einzelheiten. Rechte Maustaste oder zwei Finger drehen die Kamera, Rad oder Kneifen zoomt.');
     else if (m.kind === 'build') this.setHint(`${BUILDINGS[m.id].name} setzen: auf freies, ebenes Land klicken. Esc bricht ab.`);
     else {
-      const it = [...WATER_ITEMS, ...LAND_ITEMS].find((i) => i.mode.kind === 'tool' && i.mode.tool === m.tool);
+      const it = [...WATER_ITEMS, ...LAND_ITEMS, ...EDITOR_ITEMS].find((i) => i.mode.kind === 'tool' && i.mode.tool === m.tool);
       this.setHint(it?.desc ?? '');
     }
   }
@@ -523,9 +575,21 @@ export class Hud {
       s.population, s.children, s.sick, s.housing, Math.floor(s.wood), s.storageCap, Math.floor(s.food), Math.floor(s.water), s.waterCap,
       Math.round(s.mood * 20), s.outcome, s.scenario, pollutionLabel(s.waterPollution), s.hasPower, fmt(s.power.supply), fmt(s.power.demand),
       Math.floor(s.goods.bretter), Math.floor(s.knowledge), s.hasKnowledge, s.toolBonus, s.techs.length, s.deepCells, Math.floor(s.goalDays),
+      s.editor, s.sources, s.sinks, s.startSet,
     ].join('|');
     if (key === this.lastStatsKey) return;
     this.lastStatsKey = key;
+
+    if (s.editor) {
+      this.season.innerHTML = `<span class="season-icon normal">${icon('editor')}</span>
+      <div class="season-text"><b>Karteneditor</b><small>${s.scenarioName}</small><small class="forecast">Das Wasser läuft, damit der Fluss sichtbar wird</small></div>`;
+      this.season.className = 'season normal';
+      this.goal.innerHTML = `${icon('wasser')}<div class="goal-text"><b>Karte</b><small>${s.sources} ${s.sources === 1 ? 'Quelle' : 'Quellen'} · ${s.sinks} ${s.sinks === 1 ? 'Abfluss' : 'Abflüsse'} · Start ${s.startSet ? 'gesetzt' : 'automatisch'}</small></div>`;
+      this.goal.title = 'Im Menü (Esc): Karte speichern, teilen oder ein Probespiel starten';
+      this.goal.classList.remove('done');
+      this.res.innerHTML = '';
+      return;
+    }
 
     const phase = WEATHER_INFO[s.weather].label;
     const nextLabel = WEATHER_INFO[info.next].label;
