@@ -133,6 +133,13 @@ npm test
 npm run build
 ```
 
+Balanceprobe der Molch-Kampagne (ein Baumeister spielt alle drei Karten bis
+zum Ziel, dauert etwa eine halbe Minute und läuft darum nicht mit `npm test`):
+
+```bash
+BALANCE=1 npx vitest run src/sim/balance.test.ts
+```
+
 Aufbau: `src/sim` (Simulation, läuft im Worker), `src/render` (Three.js und
 Nachbearbeitung), `src/ui` (Oberfläche und Menü), `src/data` (Gebäude, Waren,
 Technologien und Karten), `src/online` (Spielstände lokal und in der Cloud).

@@ -785,7 +785,7 @@ export class World implements Env {
     if (goal.kind === 'clan' && pop >= goal.population && this.seasons.year >= goal.year) {
       this.outcome = 'won';
       this.log(`Ziel erreicht: ${pop} ${this.species.many} im Jahr ${this.seasons.year}. ${this.species.title} ist im Tal zuhause.`);
-    } else if (goal.kind === 'stausee' && this.goalHeld >= goal.days * DAY && pop >= goal.population) {
+    } else if (goal.kind === 'stausee' && this.goalHeld >= goal.days * DAY && pop >= goal.population && this.seasons.year >= (goal.year ?? 1)) {
       this.outcome = 'won';
       this.log(`Ziel erreicht: Der See in der Schlucht hält, ${pop} ${this.species.many} leben an seinem Ufer.`);
     }
