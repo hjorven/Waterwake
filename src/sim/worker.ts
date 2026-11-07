@@ -1,4 +1,5 @@
 /// <reference lib="webworker" />
+import { BUILDINGS } from '../data/buildings';
 import { freeScenario, scenarioById } from '../data/maps';
 import { GOOD_CODE, STATE_CODE } from './citizens';
 import { CITIZEN_STRIDE, type BuildingSnap, type FromWorker, type ToWorker } from './protocol';
@@ -11,6 +12,7 @@ let world: World | null = null;
 let speed = 1;
 let sentTerrain = -1;
 let sentBuildings = -1;
+let buildingsSentAt = 0;
 let sentVeg = -1;
 let sentSoil = -1;
 let vegSentAt = 0;
@@ -51,6 +53,7 @@ function sendTerrain(): void {
 function sendBuildings(): void {
   if (!world) return;
   sentBuildings = world.buildings.version;
+  buildingsSentAt = performance.now();
   const list: BuildingSnap[] = [];
   for (const b of world.buildings.alive()) {
     list.push({
@@ -68,6 +71,7 @@ function sendBuildings(): void {
       woodDelivered: b.woodDelivered,
       flooded: b.flooded,
       damage: b.damage,
+      power: b.def === 'wasserrad' ? world.wheelPower(b) : b.def === 'laufrad' ? (world.citizens.workingAt(b.id, 'tread') ? BUILDINGS.laufrad.powerGen : 0) : world.power.ratio,
     });
   }
   post({ type: 'buildings', list, version: world.buildings.version });
@@ -130,11 +134,12 @@ function tick(): void {
   }
 
   if (world.terrainVersion !== sentTerrain) sendTerrain();
-  if (world.buildings.version !== sentBuildings) sendBuildings();
+  if (world.buildings.version !== sentBuildings || (world.stats().hasPower && now - buildingsSentAt > 1000)) sendBuildings();
   if ((world.veg.version !== sentVeg || world.veg.soilVersion !== sentSoil) && now - vegSentAt > 400) sendVeg();
 
   const n = world.w * world.h;
   const depth = world.water.depth.slice();
+  const pollution = world.water.maxPollution() > 0.001 ? world.water.pollution.slice() : null;
   const v = new Float32Array(n * 2);
   for (let i = 0; i < n; i++) {
     if (depth[i] <= 0) continue;
@@ -159,6 +164,7 @@ function tick(): void {
     cz[k++] = STATE_CODE[c.state];
     cz[k++] = c.carry ? GOOD_CODE[c.carry] : 0;
     cz[k++] = c.child ? 0.6 : 1;
+    cz[k++] = c.sick ? 1 : 0;
   }
 
   const messages = world.messages.splice(0, world.messages.length);
@@ -168,6 +174,7 @@ function tick(): void {
       type: 'water',
       depth,
       vel: v,
+      pollution,
       citizens: cz,
       citizenCount: count,
       stats: {
@@ -183,7 +190,7 @@ function tick(): void {
       },
       messages,
     },
-    [depth.buffer, v.buffer, cz.buffer],
+    pollution ? [depth.buffer, v.buffer, cz.buffer, pollution.buffer] : [depth.buffer, v.buffer, cz.buffer],
   );
 
   // Einmal am Tag automatisch speichern

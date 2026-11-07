@@ -6,17 +6,23 @@ const WATER_LOOK: Record<Weather, { shallow: number; deep: number }> = {
   normal: { shallow: 0x5fb8c9, deep: 0x1f5f8a },
   schmelze: { shallow: 0x9d8a58, deep: 0x5e5033 },
   duerre: { shallow: 0x6ec4cc, deep: 0x2a6d92 },
+  schlamm: { shallow: 0x8f6a74, deep: 0x4a3047 },
 };
+/** Farbe von verschmutztem Wasser, nach Konzentration je Zelle eingemischt */
+const MUD_COLOR = new THREE.Color(0x6e4a5a);
 
 const vertexShader = /* glsl */ `
   attribute float depth;
   attribute vec2 vel;
+  attribute float poll;
   varying float vDepth;
   varying vec2 vVel;
+  varying float vPoll;
   varying vec3 vWorld;
   void main() {
     vDepth = depth;
     vVel = vel;
+    vPoll = poll;
     vec4 wp = modelMatrix * vec4(position, 1.0);
     vWorld = wp.xyz;
     gl_Position = projectionMatrix * viewMatrix * wp;
@@ -27,8 +33,10 @@ const fragmentShader = /* glsl */ `
   uniform float uTime;
   uniform vec3 uShallow;
   uniform vec3 uDeep;
+  uniform vec3 uMud;
   varying float vDepth;
   varying vec2 vVel;
+  varying float vPoll;
   varying vec3 vWorld;
 
   float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -50,11 +58,14 @@ const fragmentShader = /* glsl */ `
     float wave = sin(flow * 3.0 + ripple * 4.0) * 0.5 + 0.5;
     float t = clamp(vDepth / 3.0, 0.0, 1.0);
     vec3 col = mix(uShallow, uDeep, t);
-    col += wave * 0.08;
+    // Schlamm: trübe, dunkle Schlieren je nach Verschmutzung
+    float mud = clamp(vPoll * 1.4, 0.0, 1.0);
+    col = mix(col, uMud * (0.85 + 0.3 * noise(uv * 2.5 - dir * uTime * 0.4)), mud);
+    col += wave * 0.08 * (1.0 - 0.6 * mud);
     // Schaum bei starker Strömung
     float foam = smoothstep(3.0, 7.0, speed) * step(0.66, noise(uv * 9.0 + dir * uTime * 3.0));
     col = mix(col, vec3(0.93), foam * 0.45);
-    float alpha = mix(0.55, 0.9, t);
+    float alpha = mix(mix(0.55, 0.9, t), 0.95, mud);
     gl_FragColor = vec4(col, alpha);
   }
 `;
@@ -71,10 +82,12 @@ export class WaterRenderer {
   private readonly pos: THREE.BufferAttribute;
   private readonly depthAttr: THREE.BufferAttribute;
   private readonly velAttr: THREE.BufferAttribute;
+  private readonly pollAttr: THREE.BufferAttribute;
   private readonly uniforms = {
     uTime: { value: 0 },
     uShallow: { value: new THREE.Color(0x5fb8c9) },
     uDeep: { value: new THREE.Color(0x1f5f8a) },
+    uMud: { value: MUD_COLOR },
   };
   private terrain = new Float32Array(0);
   private depth: Float32Array<ArrayBufferLike> = new Float32Array(0);
@@ -89,6 +102,7 @@ export class WaterRenderer {
     const positions = new Float32Array(n * 4 * 3);
     const depths = new Float32Array(n * 4);
     const vels = new Float32Array(n * 4 * 2);
+    const polls = new Float32Array(n * 4);
     const index: number[] = [];
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
@@ -115,9 +129,12 @@ export class WaterRenderer {
     this.depthAttr.setUsage(THREE.DynamicDrawUsage);
     this.velAttr = new THREE.BufferAttribute(vels, 2);
     this.velAttr.setUsage(THREE.DynamicDrawUsage);
+    this.pollAttr = new THREE.BufferAttribute(polls, 1);
+    this.pollAttr.setUsage(THREE.DynamicDrawUsage);
     geo.setAttribute('position', this.pos);
     geo.setAttribute('depth', this.depthAttr);
     geo.setAttribute('vel', this.velAttr);
+    geo.setAttribute('poll', this.pollAttr);
     geo.setIndex(index);
     geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(w / 2, 8, h / 2), Math.hypot(w, h, 16));
     const mat = new THREE.ShaderMaterial({
@@ -138,9 +155,10 @@ export class WaterRenderer {
     for (let i = 0; i < ground.length; i++) this.terrain[i] = ground[i] + struct[i];
   }
 
-  setWater(depth: Float32Array<ArrayBufferLike>, vel: Float32Array<ArrayBufferLike>): void {
+  setWater(depth: Float32Array<ArrayBufferLike>, vel: Float32Array<ArrayBufferLike>, pollution: Float32Array<ArrayBufferLike> | null): void {
     this.depth = depth;
     const v = this.velAttr.array as Float32Array;
+    const p = this.pollAttr.array as Float32Array;
     for (let i = 0; i < depth.length; i++) {
       const vx = vel[i * 2];
       const vy = vel[i * 2 + 1];
@@ -149,8 +167,12 @@ export class WaterRenderer {
       v[b + 2] = vx; v[b + 3] = vy;
       v[b + 4] = vx; v[b + 5] = vy;
       v[b + 6] = vx; v[b + 7] = vy;
+      const q = pollution ? pollution[i] : 0;
+      const c = i * 4;
+      p[c] = p[c + 1] = p[c + 2] = p[c + 3] = q;
     }
     this.velAttr.needsUpdate = true;
+    this.pollAttr.needsUpdate = true;
   }
 
   /** Wasserfarbe je Wetter, wird weich überblendet */

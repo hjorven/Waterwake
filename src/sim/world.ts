@@ -9,14 +9,15 @@ import { generateValley, MAX_HEIGHT, type MapData } from './terrain';
 import { Vegetation } from './vegetation';
 import { WaterSim } from './water';
 
-export type Weather = 'normal' | 'schmelze' | 'duerre';
+export type Weather = 'normal' | 'schmelze' | 'duerre' | 'schlamm';
 export type Tool = 'anheben' | 'absenken' | 'damm' | 'deich' | 'schleuse' | 'abreissen';
 export type Outcome = 'won' | 'lost' | null;
 
-export const WEATHER_INFO: Record<Weather, { sourceFactor: number; evaporation: number; label: string }> = {
-  normal: { sourceFactor: 1, evaporation: 0.0015, label: 'Normalzeit' },
-  schmelze: { sourceFactor: 5, evaporation: 0.0008, label: 'Schneeschmelze' },
-  duerre: { sourceFactor: 0, evaporation: 0.004, label: 'Dürre' },
+export const WEATHER_INFO: Record<Weather, { sourceFactor: number; evaporation: number; pollution: number; label: string }> = {
+  normal: { sourceFactor: 1, evaporation: 0.0015, pollution: 0, label: 'Normalzeit' },
+  schmelze: { sourceFactor: 5, evaporation: 0.0008, pollution: 0, label: 'Schneeschmelze' },
+  duerre: { sourceFactor: 0, evaporation: 0.004, pollution: 0, label: 'Dürre' },
+  schlamm: { sourceFactor: 2, evaporation: 0.0015, pollution: 1, label: 'Schlammflut' },
 };
 
 /** Maximale Höhe eines Dammes über dem Boden */
@@ -30,15 +31,40 @@ export const START_WOOD = 30;
 export const START_BERRIES = 12;
 export const START_OTTERS = 6;
 
+/** Faktor von Strömungsstärke zu Strom am Wasserrad */
+export const WHEEL_FACTOR = 0.8;
+/** Pumpleistung des Pumpwerks je Sekunde bei voller Stromversorgung */
+export const PUMPWERK_RATE = 0.3;
+/** Reinigung des Sandfilters je Sekunde (Konzentration) */
+export const FILTER_RATE = 0.015;
+/** Grundwasser je Sekunde aus einem Brunnen */
+export const WELL_RATE = 0.03;
+
+export interface PowerStats {
+  supply: number;
+  demand: number;
+  /** Anteil des Bedarfs, der gedeckt ist, 0..1 */
+  ratio: number;
+}
+
 export interface WorldStats {
   population: number;
   children: number;
+  /** kranke Otter */
+  sick: number;
   housing: number;
   wood: number;
   berries: number;
   storageCap: number;
   water: number;
   waterCap: number;
+  /** Verschmutzung des gespeicherten Wassers 0..1 */
+  waterPollution: number;
+  /** höchste Verschmutzung auf der Karte 0..1 */
+  riverPollution: number;
+  power: PowerStats;
+  /** es gibt Stromgebäude, dann wird der Stromhaushalt angezeigt */
+  hasPower: boolean;
   season: SeasonInfo;
   /** mittlere Zufriedenheit 0..1 */
   mood: number;
@@ -72,8 +98,10 @@ export class World implements Env {
   readonly path: Pathfinder;
   readonly seasons: Seasons;
   readonly reserved = new Set<number>();
-  /** Wasservorrat in Pumpen und Tanks */
-  readonly store = { stored: 0 };
+  /** Wasservorrat in Pumpen und Tanks, mit Verschmutzung als Konzentration */
+  readonly store = { stored: 0, pollution: 0 };
+  /** Stromhaushalt, jede Sekunde neu berechnet */
+  readonly power: PowerStats & { wheels: number } = { supply: 0, demand: 0, ratio: 1, wheels: 0 };
   readonly seed: number;
   scenario: Scenario;
   weather: Weather = 'normal';
@@ -99,6 +127,8 @@ export class World implements Env {
   private drownedToday = 0;
   private woodWarnAt = -Infinity;
   private floodWarnAt = -Infinity;
+  private dirtyWarned = false;
+  private poisonedToday = 0;
 
   constructor(map: MapData, seed: number, scenario?: Scenario) {
     this.w = map.w;
@@ -207,8 +237,38 @@ export class World implements Env {
     return this.water.depth;
   }
 
+  get pollution(): Float32Array {
+    return this.water.pollution;
+  }
+
   waterCapacity(): number {
     return this.buildings.waterCapacity();
+  }
+
+  /** Wasser in den Speicher mischen, gibt die aufgenommene Menge zurück */
+  addWater(amount: number, pollution: number): number {
+    const cap = this.buildings.waterCapacity();
+    const add = Math.max(0, Math.min(amount, cap - this.store.stored));
+    if (add <= 0) return 0;
+    const total = this.store.stored + add;
+    this.store.pollution = (this.store.pollution * this.store.stored + pollution * add) / total;
+    this.store.stored = total;
+    return add;
+  }
+
+  /** Laufräder sollen laufen, wenn die Wasserräder den Bedarf nicht decken */
+  needsTread(): boolean {
+    return this.power.demand > this.power.wheels + 0.01;
+  }
+
+  /** Steht dieser Punkt im Umkreis einer Heilerhütte, in der gerade jemand arbeitet? */
+  healAt(x: number, y: number): boolean {
+    for (const b of this.buildings.alive()) {
+      if (b.def !== 'heiler' || !b.built) continue;
+      const c = this.buildings.center(b);
+      if (Math.hypot(c.x - x, c.y - y) <= BUILDINGS.heiler.range && this.citizens.workingAt(b.id, 'heal')) return true;
+    }
+    return false;
   }
 
   height(i: number): number {
@@ -257,6 +317,7 @@ export class World implements Env {
     this.weather = weather;
     const info = WEATHER_INFO[weather];
     this.water.sourceFactor = info.sourceFactor;
+    this.water.sourcePollution = info.pollution;
     this.water.evaporation = info.evaporation;
     // In der Dürre regnet es nicht: Feuchte nur noch nahe am Wasser
     this.veg.ambient = weather === 'duerre' ? 0 : 1;
@@ -280,7 +341,9 @@ export class World implements Env {
           ? `Die Dürre beginnt. Vorhersage: ${info.daysLeft} Tage.`
           : change === 'schmelze'
             ? 'Schneeschmelze! Der Fluss schwillt an, eine Flutwelle kommt.'
-            : 'Die Normalzeit kehrt zurück.',
+            : change === 'schlamm'
+              ? 'Schlammflut! Die Quellen bringen schmutziges Wasser. Nicht aus dem Fluss trinken, Pflanzen am Ufer leiden.'
+              : 'Die Normalzeit kehrt zurück.',
       );
     }
     if (this.autoSeasons && this.weather === 'schmelze') this.water.sourceFactor = this.seasons.meltFactor();
@@ -289,7 +352,10 @@ export class World implements Env {
       this.moistTimer -= 1;
       this.veg.updateMoisture(this.water.depth);
       this.drownedToday += this.veg.updateFlood(this.water.depth, 1);
+      this.poisonedToday += this.veg.updatePollution(this.water.depth, this.water.pollution, 1);
       this.floodCheck(1);
+      this.updatePower();
+      this.runMachines(1);
       this.checkOutcome();
     }
     this.growTimer += dt;
@@ -308,9 +374,79 @@ export class World implements Env {
         this.log(plants(this.drownedToday, 'im Hochwasser ertrunken'));
         this.drownedToday = 0;
       }
+      if (this.poisonedToday > 0) {
+        this.log(plants(this.poisonedToday, 'am schmutzigen Wasser eingegangen'));
+        this.poisonedToday = 0;
+      }
       this.woodWarning();
     }
     this.citizens.step(dt);
+  }
+
+  /** Stromhaushalt: Wasserräder nach Strömung, Laufräder mit Läufer, Bedarf der Verbraucher */
+  private updatePower(): void {
+    const p = this.power;
+    let wheels = 0;
+    let tread = 0;
+    let demand = 0;
+    for (const b of this.buildings.alive()) {
+      if (!b.built) continue;
+      const def = BUILDINGS[b.def];
+      if (b.def === 'wasserrad') wheels += this.wheelPower(b);
+      else if (b.def === 'laufrad') tread += this.citizens.workingAt(b.id, 'tread') ? def.powerGen : 0;
+      demand += def.powerUse;
+    }
+    p.wheels = wheels;
+    p.supply = wheels + tread;
+    p.demand = demand;
+    p.ratio = demand > 0 ? Math.min(1, p.supply / demand) : 1;
+  }
+
+  /** Leistung eines Wasserrads aus der stärksten Strömung nebenan */
+  wheelPower(b: Building): number {
+    let best = 0;
+    const v = { x: 0, y: 0 };
+    for (const i of this.buildings.ring(b)) {
+      if (this.water.depth[i] < 0.05 || this.struct[i] > 0) continue;
+      this.water.velocity(i, v);
+      const speed = Math.hypot(v.x, v.y);
+      if (speed > best) best = speed;
+    }
+    return Math.min(BUILDINGS.wasserrad.powerGen, best * WHEEL_FACTOR);
+  }
+
+  /** Maschinen, die ohne Arbeiter laufen: Pumpwerk, Sandfilter, Brunnen */
+  private runMachines(dt: number): void {
+    const ratio = this.power.ratio;
+    for (const b of this.buildings.alive()) {
+      if (!b.built) continue;
+      switch (b.def) {
+        case 'pumpwerk': {
+          let want = PUMPWERK_RATE * ratio * dt;
+          for (const i of this.buildings.ring(b)) {
+            if (want <= 0) break;
+            if (this.water.depth[i] < 0.05 || this.struct[i] > 0) continue;
+            const take = Math.min(want, this.water.depth[i] * 0.5);
+            const conc = this.water.take(i, take);
+            want -= this.addWater(take, conc);
+          }
+          break;
+        }
+        case 'sandfilter':
+          this.store.pollution = Math.max(0, this.store.pollution - FILTER_RATE * ratio * dt);
+          break;
+        case 'brunnen':
+          this.addWater(WELL_RATE * dt, 0);
+          break;
+      }
+    }
+    if (this.store.stored < 0.5) this.store.pollution = 0;
+    if (this.store.pollution > 0.3 && !this.dirtyWarned) {
+      this.dirtyWarned = true;
+      this.log('Das gespeicherte Wasser ist verschmutzt und macht krank. Ein Sandfilter reinigt es.');
+    } else if (this.store.pollution < 0.1) {
+      this.dirtyWarned = false;
+    }
   }
 
   /** Baustellen warten auf Holz, aber es gibt keines und keinen Holzfäller */
@@ -392,12 +528,17 @@ export class World implements Env {
     return {
       population: this.citizens.count(),
       children: this.citizens.children(),
+      sick: this.citizens.sick(),
       housing: this.buildings.housing(),
       wood: this.buildings.total('holz'),
       berries: this.buildings.total('beeren'),
       storageCap: this.buildings.storageCapacity(),
       water: this.store.stored,
       waterCap: this.buildings.waterCapacity(),
+      waterPollution: this.store.pollution,
+      riverPollution: this.water.maxPollution(),
+      power: { supply: this.power.supply, demand: this.power.demand, ratio: this.power.ratio },
+      hasPower: [...this.buildings.alive()].some((b) => BUILDINGS[b.def].category === 'strom'),
       season: this.seasons.info(),
       mood: this.citizens.mood(),
       births: this.citizens.births,

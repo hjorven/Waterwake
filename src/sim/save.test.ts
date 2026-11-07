@@ -49,6 +49,47 @@ describe('Spielstand', () => {
   });
 });
 
+describe('Spielstand mit Schlamm', () => {
+  it('behält Verschmutzung, Gesundheit und Speicherzustand', () => {
+    const world = World.generate(96, 96, 7);
+    world.settle();
+    world.forceWeather('schlamm');
+    runDays(world, 1);
+    world.store.stored = 3;
+    world.store.pollution = 0.4;
+    const c = world.citizens.list[0];
+    c.health = 0.2;
+    c.sick = true;
+    const { data } = serializeWorld(world);
+    expect(data.v).toBe(2);
+    const back = restoreWorld(JSON.parse(JSON.stringify(data)));
+    expect(back.water.maxPollution()).toBeCloseTo(world.water.maxPollution(), 5);
+    expect(back.store.pollution).toBeCloseTo(0.4, 5);
+    expect(back.citizens.list[0].health).toBeCloseTo(0.2, 5);
+    expect(back.citizens.sick()).toBe(1);
+    expect(back.weather).toBe('schlamm');
+  });
+
+  it('lädt alte Spielstände der Version 1 ohne Schmutzfelder', () => {
+    const world = World.generate(64, 64, 3);
+    world.settle();
+    const { data } = serializeWorld(world);
+    const old = JSON.parse(JSON.stringify(data));
+    old.v = 1;
+    delete old.pollution;
+    delete old.storePollution;
+    delete old.veg.poison;
+    for (const c of old.citizens.list) {
+      delete c.health;
+      delete c.sick;
+    }
+    const back = restoreWorld(old);
+    expect(back.water.maxPollution()).toBe(0);
+    expect(back.citizens.sick()).toBe(0);
+    expect(back.citizens.list[0].health).toBe(1);
+  });
+});
+
 describe('Spielstand mit Jungen', () => {
   it('behält Junge, Alter und Stimmung', () => {
     const world = World.generate(96, 96, 7);

@@ -85,6 +85,7 @@ interface CitizenTrack {
   carry: number;
   /** 1 erwachsen, kleiner für Junge */
   scale: number;
+  sick: boolean;
 }
 
 /**
@@ -116,7 +117,7 @@ export class InstanceRenderer {
     this.berries = new Pool(this.group, berriesGeometry(), 256);
     for (const id of BUILDING_IDS) this.buildings.set(id, new Pool(this.group, buildingGeometry(id), 32));
     for (const size of [1, 2]) this.sites.set(size, new Pool(this.group, siteGeometry(size), 16));
-    this.otters = new Pool(this.group, otterGeometry(), 64);
+    this.otters = new Pool(this.group, otterGeometry(), 64, true);
     this.logs = new Pool(this.group, logGeometry(), 64);
     this.baskets = new Pool(this.group, basketGeometry(), 64);
   }
@@ -221,7 +222,7 @@ export class InstanceRenderer {
       seen.add(id);
       let t = this.tracks.get(id);
       if (!t) {
-        t = { id, px: data[o + 1], py: data[o + 2], pz: data[o + 3], x: 0, y: 0, z: 0, heading: 0, state: 0, carry: 0, scale: 1 };
+        t = { id, px: data[o + 1], py: data[o + 2], pz: data[o + 3], x: 0, y: 0, z: 0, heading: 0, state: 0, carry: 0, scale: 1, sick: false };
         this.tracks.set(id, t);
       } else {
         t.px = t.x;
@@ -235,6 +236,7 @@ export class InstanceRenderer {
       t.state = data[o + 5];
       t.carry = data[o + 6];
       t.scale = data[o + 7] || 1;
+      t.sick = data[o + 8] > 0.5;
     }
     for (const id of [...this.tracks.keys()]) if (!seen.has(id)) this.tracks.delete(id);
     this.snapInterval = Math.max(0.02, Math.min(0.3, now - this.snapTime));
@@ -260,12 +262,16 @@ export class InstanceRenderer {
       const working = t.state === 2 ? Math.sin(now * 8 + t.id) * 0.08 : 0;
       const hop = t.scale < 1 && walking ? Math.abs(Math.sin(now * 14 + t.id)) * 0.1 : 0;
       setInstance(this.otters.mesh, i, x, z + bob + hop, y, t.heading + working, t.scale);
+      // kranke Otter sind blass und grünlich
+      color.setRGB(t.sick ? 0.8 : 1, t.sick ? 1 : 1, t.sick ? 0.75 : 1);
+      this.otters.mesh.setColorAt(i, color);
       if (t.carry === 1) setInstance(this.logs.mesh, nl++, x, z + bob, y, t.heading, t.scale);
       else if (t.carry === 2) setInstance(this.baskets.mesh, nb++, x, z + bob, y, t.heading, t.scale);
       i++;
     }
     this.otters.mesh.count = i;
     this.otters.mesh.instanceMatrix.needsUpdate = true;
+    if (this.otters.mesh.instanceColor) this.otters.mesh.instanceColor.needsUpdate = true;
     this.logs.mesh.count = nl;
     this.logs.mesh.instanceMatrix.needsUpdate = true;
     this.baskets.mesh.count = nb;

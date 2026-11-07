@@ -52,6 +52,49 @@ export function canPlaceAt(id: BuildingId, x: number, y: number, w: number, h: n
       else if (ctx.ground[i] !== height) return 'der Boden muss eben sein';
     }
   }
+  // Zugang: Jedes Gebäude braucht eine freie Nachbarzelle, auch die Nachbarn danach noch
+  const mine: number[] = [];
+  for (let dy = 0; dy < def.size; dy++) for (let dx = 0; dx < def.size; dx++) mine.push((y + dy) * w + x + dx);
+  const mineSet = new Set(mine);
+  const ringOf = (cells: number[]): number[] => {
+    const set = new Set(cells);
+    const out: number[] = [];
+    for (const c of cells) {
+      const cx = c % w;
+      const cy = (c / w) | 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = cx + dx;
+          const ny = cy + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          const j = ny * w + nx;
+          if (!set.has(j)) out.push(j);
+        }
+      }
+    }
+    return out;
+  };
+  const hasAccess = (cells: number[]): boolean => ringOf(cells).some((i) => !mineSet.has(i) && occ[i] < 0 && !ctx.sink[i]);
+  if (!hasAccess(mine)) return 'kein Zugang zum Gebäude';
+  const seen = new Set<number>();
+  for (const i of ringOf(mine)) {
+    const other = occ[i];
+    if (other < 0 || seen.has(other)) continue;
+    seen.add(other);
+    const cells: number[] = [];
+    const ox = i % w;
+    const oy = (i / w) | 0;
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        const nx = ox + dx;
+        const ny = oy + dy;
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+        const j = ny * w + nx;
+        if (occ[j] === other) cells.push(j);
+      }
+    }
+    if (!hasAccess(cells)) return 'würde ein Nachbargebäude einbauen';
+  }
   if (def.needsWater) {
     let wet = false;
     for (let dy = -1; dy <= def.size && !wet; dy++) {

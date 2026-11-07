@@ -248,7 +248,103 @@ export function buildingGeometry(id: BuildingId): THREE.BufferGeometry {
       parts.push(cylinder(0.22, 0.3, C.holzHell, 0.45, 0.08, 0.35, 6, 0.26));
       return merge(parts);
     }
+    case 'heiler':
+      return merge([
+        ...hut(0.9, C.holzHell, C.laub),
+        // grünes Kreuz über der Tür und ein Kräuterbeet
+        box(0.2, 0.06, 0.04, C.laubDunkel, 0, 0.56, 0.37),
+        box(0.06, 0.2, 0.04, C.laubDunkel, 0, 0.49, 0.37),
+        box(0.3, 0.08, 0.2, C.holzDunkel, 0.3, 0, 0.36),
+        ball(0.07, C.laub, 0.22, 0.12, 0.36),
+        ball(0.07, C.laub, 0.38, 0.12, 0.36),
+      ]);
+    case 'brunnen': {
+      const parts: THREE.BufferGeometry[] = [
+        cylinder(0.32, 0.3, C.stein, 0, 0, 0, 10),
+        cylinder(0.24, 0.32, C.steinDunkel, 0, 0, 0, 10),
+        box(0.06, 0.7, 0.06, C.holzDunkel, -0.3, 0.3, 0),
+        box(0.06, 0.7, 0.06, C.holzDunkel, 0.3, 0.3, 0),
+        box(0.76, 0.05, 0.05, C.holzDunkel, 0, 0.98, 0),
+        cylinder(0.1, 0.1, C.holzHell, 0, 0.5, 0, 6),
+      ];
+      const roof = cone(0.5, 0.26, C.stroh, 0, 1.03, 0, 4, Math.PI / 4);
+      parts.push(roof);
+      return merge(parts);
+    }
+    case 'zisterne':
+      return merge([
+        cylinder(0.85, 0.95, C.holz, 0, 0, 0, 14),
+        cylinder(0.88, 0.07, C.eisen, 0, 0.2, 0, 14),
+        cylinder(0.88, 0.07, C.eisen, 0, 0.62, 0, 14),
+        cone(0.92, 0.45, C.holzDunkel, 0, 0.95, 0, 8),
+        box(0.14, 0.4, 0.14, C.stein, 0.95, 0, 0.3),
+        box(0.5, 0.08, 0.08, C.eisen, 0.75, 0.4, 0.3),
+      ]);
+    case 'wasserrad': {
+      const wheel = colored(new THREE.CylinderGeometry(0.42, 0.42, 0.14, 12), C.holz);
+      wheel.rotateZ(Math.PI / 2);
+      wheel.translate(0.32, 0.42, 0);
+      const hub = colored(new THREE.CylinderGeometry(0.12, 0.12, 0.24, 8), C.holzDunkel);
+      hub.rotateZ(Math.PI / 2);
+      hub.translate(0.32, 0.42, 0);
+      const parts: THREE.BufferGeometry[] = [wheel, hub];
+      for (let k = 0; k < 6; k++) {
+        const paddle = colored(new THREE.BoxGeometry(0.18, 0.1, 0.9), C.holzHell);
+        paddle.rotateX((k * Math.PI) / 6);
+        paddle.translate(0.32, 0.42, 0);
+        parts.push(paddle);
+      }
+      parts.push(box(0.5, 0.36, 0.5, C.stein, -0.18, 0, 0));
+      parts.push(cone(0.38, 0.26, C.holzDunkel, -0.18, 0.36, 0, 4, Math.PI / 4));
+      parts.push(box(0.06, 0.5, 0.06, C.holzDunkel, 0.32, 0, 0.3));
+      parts.push(box(0.06, 0.5, 0.06, C.holzDunkel, 0.32, 0, -0.3));
+      return merge(parts);
+    }
+    case 'laufrad': {
+      const wheel = colored(new THREE.CylinderGeometry(0.4, 0.4, 0.3, 12), C.holzHell);
+      wheel.rotateZ(Math.PI / 2);
+      wheel.translate(0, 0.46, 0);
+      const inner = colored(new THREE.CylinderGeometry(0.34, 0.34, 0.32, 12), C.holzDunkel);
+      inner.rotateZ(Math.PI / 2);
+      inner.translate(0, 0.46, 0);
+      return merge([
+        wheel,
+        inner,
+        box(0.08, 0.5, 0.08, C.holzDunkel, -0.22, 0, 0.3),
+        box(0.08, 0.5, 0.08, C.holzDunkel, 0.22, 0, 0.3),
+        box(0.08, 0.5, 0.08, C.holzDunkel, -0.22, 0, -0.3),
+        box(0.08, 0.5, 0.08, C.holzDunkel, 0.22, 0, -0.3),
+        box(0.6, 0.06, 0.06, C.holzDunkel, 0, 0.5, 0.3),
+        box(0.6, 0.06, 0.06, C.holzDunkel, 0, 0.5, -0.3),
+        box(0.2, 0.2, 0.3, C.eisen, 0.35, 0, 0),
+      ]);
+    }
+    case 'pumpwerk': {
+      const fly = colored(new THREE.CylinderGeometry(0.22, 0.22, 0.06, 12), C.eisen);
+      fly.rotateZ(Math.PI / 2);
+      fly.translate(0.36, 0.5, -0.1);
+      return merge([
+        box(0.64, 0.5, 0.6, C.stein, -0.08, 0, 0),
+        box(0.7, 0.08, 0.66, C.holzDunkel, -0.08, 0.5, 0),
+        cylinder(0.08, 0.5, C.steinDunkel, -0.25, 0.58, -0.15, 8), // Schlot
+        fly,
+        box(0.12, 0.1, 0.56, C.eisen, 0.2, 0.3, 0.3), // Rohr zum Wasser
+        box(0.3, 0.04, 0.5, C.wasser, 0.2, 0.09, 0.42),
+      ]);
+    }
+    case 'sandfilter':
+      return merge([
+        box(0.7, 0.2, 0.7, C.stein, 0, 0, 0),
+        box(0.6, 0.18, 0.6, C.stroh, 0, 0.2, 0),
+        box(0.6, 0.12, 0.6, C.steinDunkel, 0, 0.38, 0),
+        box(0.6, 0.08, 0.6, C.wasser, 0, 0.5, 0),
+        box(0.66, 0.04, 0.66, C.holzDunkel, 0, 0.58, 0),
+        box(0.08, 0.3, 0.4, C.eisen, 0.36, 0.3, 0.1),
+      ]);
   }
 }
 
-export const BUILDING_IDS: BuildingId[] = ['lager', 'huette', 'pumpe', 'tank', 'sammler', 'holzfaeller', 'foerster', 'badesteg', 'musikplatz'];
+export const BUILDING_IDS: BuildingId[] = [
+  'lager', 'huette', 'pumpe', 'tank', 'sammler', 'holzfaeller', 'foerster', 'badesteg', 'musikplatz',
+  'heiler', 'brunnen', 'zisterne', 'wasserrad', 'laufrad', 'pumpwerk', 'sandfilter',
+];

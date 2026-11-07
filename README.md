@@ -22,6 +22,12 @@ Spielen: https://hjorven.github.io/Waterwake/
   (vier Plätze, Autosave) und in der Cloud (Supabase, anonyme Anmeldung).
   Artstil: Tilt-Shift, Farbstimmung je Jahreszeit, braunes Schmelzwasser,
   Hitzeflimmern in der Dürre.
+- **M4, Teil 1: Schlammflut und Strom**: Ab dem dritten Jahr bringt die
+  Schlammflut schmutziges Wasser aus den Bergen. Die Verschmutzung wandert mit
+  dem Fluss, Pflanzen am Ufer gehen ein, schmutziges Trinkwasser macht Otter
+  krank (Heilerhütte, Sandfilter). Wasserräder erzeugen Strom aus der Strömung,
+  Laufräder als Notstrom, Pumpwerk und Sandfilter verbrauchen ihn. Brunnen und
+  Zisterne für lange Dürren. Baumenü mit Reitern Siedlung, Versorgung, Strom.
 
 ## Steuerung
 

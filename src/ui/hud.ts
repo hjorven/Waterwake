@@ -1,4 +1,4 @@
-import { BUILDINGS, BUILDING_ORDER, DAM_WOOD_PER_LEVEL, GATE_WOOD, type BuildingId } from '../data/buildings';
+import { BUILDINGS, BUILDING_ORDER, CATEGORY_LABEL, DAM_WOOD_PER_LEVEL, DRINK_SPOTS, GATE_WOOD, type BuildingCategory, type BuildingId } from '../data/buildings';
 import type { BuildingSnap, SimStats } from '../sim/protocol';
 import { MAX_DAM, MAX_DIKE, WEATHER_INFO, type Tool, type Weather } from '../sim/world';
 
@@ -11,7 +11,7 @@ export interface HudCallbacks {
   onMenu(): void;
 }
 
-type Tab = 'gebaeude' | 'wasserbau' | 'gelaende';
+type Tab = BuildingCategory | 'wasserbau' | 'gelaende';
 
 const SVG_OPEN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
 
@@ -25,6 +25,15 @@ export const ICONS: Record<string, string> = {
   lager: '<path d="M3 9l9-5 9 5v11H3z"/><path d="M3 9h18M9 20v-7h6v7"/>',
   badesteg: '<path d="M3 10h13"/><path d="M5 10v9M9 10v9M13 10v9"/><path d="M16 10v6"/><path d="M3 20c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/>',
   musikplatz: '<ellipse cx="12" cy="8" rx="7" ry="3"/><path d="M5 8v8c0 1.7 3.1 3 7 3s7-1.3 7-3V8"/><path d="M8 3l2 4M16 3l-2 4"/>',
+  heiler: '<path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/><path d="M12 12v6M9 15h6"/>',
+  brunnen: '<path d="M4 20V9h16v11"/><path d="M2 9l10-6 10 6"/><path d="M8 20v-5a4 4 0 0 1 8 0v5"/>',
+  zisterne: '<path d="M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3v10c0 1.7-3.6 3-8 3s-8-1.3-8-3z"/><path d="M4 7c0 1.7 3.6 3 8 3s8-1.3 8-3M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>',
+  wasserrad: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2"/><path d="M12 4v16M4 12h16M6.3 6.3l11.4 11.4M17.7 6.3L6.3 17.7"/>',
+  laufrad: '<circle cx="12" cy="11" r="8"/><path d="M4 21h16"/><circle cx="12" cy="11" r="2"/><path d="M10 13l-2 4M14 13l2 4"/>',
+  pumpwerk: '<rect x="3" y="10" width="12" height="10" rx="1"/><path d="M6 10V6h3v4"/><circle cx="18" cy="8" r="3"/><path d="M15 15h6v-4"/>',
+  sandfilter: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9h16M4 14h16"/><path d="M8 17v2M12 17v2M16 17v2"/>',
+  strom: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
+  krank: '<circle cx="12" cy="12" r="9"/><path d="M8 9l2 2M10 9l-2 2M14 9l2 2M16 9l-2 2"/><path d="M9 16c1.5-1.5 4.5-1.5 6 0"/>',
   damm: '<path d="M3 20h18M4 20V9h16v11M4 14h16M9 9v5M14 14v6"/>',
   deich: '<path d="M3 20h18M4 20c2-8 14-8 16 0"/>',
   schleuse: '<path d="M5 4v16M19 4v16M8 8h8v8H8z"/><path d="M12 8v8"/>',
@@ -41,6 +50,7 @@ export const ICONS: Record<string, string> = {
   normal: '<circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/>',
   schmelze: '<path d="M12 2v20M2 12h20M5 5l14 14M19 5L5 19"/>',
   duerre: '<circle cx="12" cy="8" r="4"/><path d="M3 18c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/>',
+  schlamm: '<path d="M3 10c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/><path d="M3 15c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/><circle cx="7" cy="19" r="1" fill="currentColor"/><circle cx="12" cy="20" r="1" fill="currentColor"/><circle cx="17" cy="19" r="1" fill="currentColor"/>',
   pause: '<path d="M8 5v14M16 5v14"/>',
   play: '<path d="M7 4l12 8-12 8z"/>',
   schnell: '<path d="M4 4l8 8-8 8M12 4l8 8-8 8"/>',
@@ -129,8 +139,8 @@ const LAND_ITEMS: Item[] = [
   },
 ];
 
-function buildItems(): Item[] {
-  return BUILDING_ORDER.map((id) => {
+function buildItems(category: BuildingCategory): Item[] {
+  return BUILDING_ORDER.filter((id) => BUILDINGS[id].category === category).map((id) => {
     const d = BUILDINGS[id];
     const extra: string[] = [];
     if (d.workers) extra.push(`${d.workers} Arbeiter`);
@@ -138,6 +148,8 @@ function buildItems(): Item[] {
     if (d.waterCap) extra.push(`${d.waterCap} Wasser`);
     if (d.storage) extra.push(`${d.storage} je Ware`);
     if (d.range) extra.push(`Umkreis ${d.range}`);
+    if (d.powerGen) extra.push(`bis ${fmt(d.powerGen)} Strom`);
+    if (d.powerUse) extra.push(`braucht ${fmt(d.powerUse)} Strom`);
     return {
       key: id,
       label: d.name,
@@ -149,7 +161,19 @@ function buildItems(): Item[] {
   });
 }
 
-const WEATHER_ICON: Record<Weather, string> = { normal: 'normal', schmelze: 'schmelze', duerre: 'duerre' };
+const WEATHER_ICON: Record<Weather, string> = { normal: 'normal', schmelze: 'schmelze', duerre: 'duerre', schlamm: 'schlamm' };
+
+/** Zahl mit einer Nachkommastelle und Komma */
+export function fmt(n: number): string {
+  return (Math.round(n * 10) / 10).toLocaleString('de-DE', { maximumFractionDigits: 1 });
+}
+
+export function pollutionLabel(p: number): string {
+  if (p < 0.1) return 'sauber';
+  if (p < 0.3) return 'leicht trüb';
+  if (p < 0.6) return 'verschmutzt';
+  return 'schlammig';
+}
 
 export function moodLabel(mood: number): string {
   if (mood >= 0.75) return 'glücklich';
@@ -180,6 +204,7 @@ export class Hud {
   private panelTitle: HTMLElement;
   private panelBuilding: BuildingSnap | null = null;
   private wood = 0;
+  private stats: SimStats | null = null;
   private cards = new Map<string, HTMLElement>();
   private lastStatsKey = '';
 
@@ -258,7 +283,9 @@ export class Hud {
     this.setSpeed(1);
 
     const tabs: [Tab, string][] = [
-      ['gebaeude', 'Gebäude'],
+      ['siedlung', CATEGORY_LABEL.siedlung],
+      ['versorgung', CATEGORY_LABEL.versorgung],
+      ['strom', CATEGORY_LABEL.strom],
       ['wasserbau', 'Wasserbau'],
       ['gelaende', 'Gelände'],
     ];
@@ -270,7 +297,7 @@ export class Hud {
       btn.addEventListener('click', () => this.showTab(t));
       this.tabs.appendChild(btn);
     }
-    this.showTab('gebaeude');
+    this.showTab('siedlung');
     this.setMode({ kind: 'select' }, false);
     this.updateOptions();
   }
@@ -292,7 +319,7 @@ export class Hud {
 
   private showTab(tab: Tab): void {
     for (const b of this.tabs.children) (b as HTMLElement).classList.toggle('active', (b as HTMLElement).dataset.tab === tab);
-    const list = tab === 'gebaeude' ? buildItems() : tab === 'wasserbau' ? WATER_ITEMS : LAND_ITEMS;
+    const list = tab === 'wasserbau' ? WATER_ITEMS : tab === 'gelaende' ? LAND_ITEMS : buildItems(tab);
     this.items.innerHTML = '';
     this.cards.clear();
     for (const it of list) {
@@ -377,14 +404,15 @@ export class Hud {
 
   setStats(s: SimStats): void {
     this.wood = s.wood;
+    this.stats = s;
     this.setSpeed(s.speed);
     this.refreshCards();
     const info = s.season;
     // Die Leiste nur neu bauen, wenn sich sichtbare Werte geändert haben
     const key = [
       info.day, info.year, s.weather, info.daysLeft, info.next, info.nextMin, info.nextMax,
-      s.population, s.children, s.housing, Math.floor(s.wood), s.storageCap, Math.floor(s.berries), Math.floor(s.water), s.waterCap,
-      Math.round(s.mood * 20), s.outcome, s.scenario,
+      s.population, s.children, s.sick, s.housing, Math.floor(s.wood), s.storageCap, Math.floor(s.berries), Math.floor(s.water), s.waterCap,
+      Math.round(s.mood * 20), s.outcome, s.scenario, pollutionLabel(s.waterPollution), s.hasPower, fmt(s.power.supply), fmt(s.power.demand),
     ].join('|');
     if (key === this.lastStatsKey) return;
     this.lastStatsKey = key;
@@ -411,19 +439,22 @@ export class Hud {
     const chip = (ic: string, title: string, value: string, cls: string) =>
       `<div class="chip ${cls}" title="${title}">${icon(ic)}<b>${value}</b></div>`;
     const moodCls = s.mood < 0.4 ? 'warn' : s.mood >= 0.75 ? 'good' : '';
+    const dirty = s.waterPollution >= 0.3;
     this.res.innerHTML =
-      chip('otter', `Bewohner / Betten${s.children ? `, davon ${s.children} Junge` : ''}`, `${s.population}<span>/${s.housing}</span>`, s.population > s.housing ? 'warn' : '') +
+      chip('otter', `Bewohner / Betten${s.children ? `, davon ${s.children} Junge` : ''}${s.sick ? `, ${s.sick} krank` : ''}`, `${s.population}<span>/${s.housing}</span>`, s.population > s.housing ? 'warn' : '') +
+      (s.sick ? chip('krank', 'Kranke Otter: schmutziges Wasser getrunken. Sauberes Wasser und eine Heilerhütte helfen.', `${s.sick}`, 'warn') : '') +
       chip(s.mood < 0.4 ? 'moodBad' : 'mood', `Zufriedenheit: ${moodLabel(s.mood)}. Hütten, Essen, Wasser, Badesteg und Musikplatz machen zufrieden.`, `${Math.round(s.mood * 100)}<span>%</span>`, moodCls) +
       chip('holz', 'Holz im Lager / Platz', `${Math.floor(s.wood)}<span>/${s.storageCap}</span>`, s.wood < 5 ? 'warn' : '') +
       chip('beeren', 'Beeren im Lager / Platz', `${Math.floor(s.berries)}<span>/${s.storageCap}</span>`, s.berries < s.population ? 'warn' : '') +
-      chip('wasser', 'Wasser im Speicher / Speicherplatz', `${Math.floor(s.water)}<span>/${s.waterCap}</span>`, s.waterCap > 0 && s.water < s.population ? 'warn' : '');
+      chip('wasser', `Wasser im Speicher / Speicherplatz, ${pollutionLabel(s.waterPollution)}${dirty ? '. Ein Sandfilter reinigt es' : ''}`, `${Math.floor(s.water)}<span>/${s.waterCap}</span>`, dirty || (s.waterCap > 0 && s.water < s.population) ? 'warn' : '') +
+      (s.hasPower ? chip('strom', `Strom: Erzeugung / Bedarf. ${s.power.ratio < 1 ? 'Es fehlt Strom, Maschinen laufen langsamer.' : 'Alle Maschinen laufen.'}`, `${fmt(s.power.supply)}<span>/${fmt(s.power.demand)}</span>`, s.power.ratio < 1 ? 'warn' : '') : '');
   }
 
   pushMessages(list: string[]): void {
     for (const text of list) {
       const el = document.createElement('div');
-      const bad = /verdurstet|verhungert|Dürre|Nicht genug|Kein |vertrocknet|aufgebraucht|Hochwasser|weggerissen|ertrunken|gestorben|ausgelöscht/.test(text);
-      const good = /geboren|Ziel erreicht|fertig\./.test(text);
+      const bad = /verdurstet|verhungert|Dürre|Nicht genug|Kein |vertrocknet|aufgebraucht|Hochwasser|weggerissen|ertrunken|gestorben|ausgelöscht|krank|verschmutzt|Schlammflut|eingegangen|Holz ist alle/.test(text);
+      const good = /geboren|Ziel erreicht|fertig\.|wieder gesund/.test(text);
       el.className = `msg${bad ? ' bad' : good ? ' good' : ''}`;
       el.textContent = text;
       this.messages.appendChild(el);
@@ -455,6 +486,9 @@ export class Hud {
         rows.push(`<div class="row"><span>Beeren</span><b>${Math.floor(b.berries)} / ${def.storage}</b></div>`);
       }
       if (def.waterCap) rows.push(`<div class="row"><span>Speicherplatz</span><b>${def.waterCap} Wasser</b></div>`);
+      if (DRINK_SPOTS.includes(b.def) && this.stats) rows.push(`<div class="row${this.stats.waterPollution >= 0.3 ? ' bad' : ''}"><span>Wasser im Speicher</span><b>${pollutionLabel(this.stats.waterPollution)}</b></div>`);
+      if (def.powerGen) rows.push(`<div class="row"><span>Strom</span><b>${fmt(b.power)} von ${fmt(def.powerGen)}</b></div>`);
+      if (def.powerUse) rows.push(`<div class="row${b.power < 1 ? ' bad' : ''}"><span>Strom</span><b>${b.power >= 1 ? 'versorgt' : `${Math.round(b.power * 100)} % versorgt`}</b></div>`);
       if (def.range) rows.push(`<div class="row"><span>${def.joy ? 'Wirkungskreis' : 'Umkreis'}</span><b>${def.range} Felder</b></div>`);
       if (def.floodDepth >= 1.5) rows.push(`<div class="row"><span>Hochwasser</span><b>hält stand</b></div>`);
       else if (def.floodDepth >= 0.9) rows.push(`<div class="row"><span>Hochwasser</span><b>steht auf Pfählen</b></div>`);

@@ -5,7 +5,7 @@ import type { SeasonsSave } from './seasons';
 import type { Source } from './water';
 import { World, type Outcome, type Weather } from './world';
 
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
 
 /** Kompletter Spielstand, Raster als Base64 */
 export interface SaveGame {
@@ -19,6 +19,8 @@ export interface SaveGame {
   autoSeasons: boolean;
   freeBuild: boolean;
   store: number;
+  /** Verschmutzung des Speichers (ab Version 2) */
+  storePollution?: number;
   outcome: Outcome;
   lostToFlood: number;
   ground: string;
@@ -28,7 +30,9 @@ export interface SaveGame {
   sink: string;
   sources: Source[];
   depth: string;
-  veg: { trees: string; bushes: string; dry: string; growth: string; stress: string; drown: string };
+  /** Verschmutzung je Zelle (ab Version 2) */
+  pollution?: string;
+  veg: { trees: string; bushes: string; dry: string; growth: string; stress: string; drown: string; poison?: string };
   buildings: Building[];
   citizens: CitizensSave;
   seasons: SeasonsSave;
@@ -85,6 +89,7 @@ export function serializeWorld(world: World, name = ''): { data: SaveGame; meta:
     autoSeasons: world.autoSeasons,
     freeBuild: world.freeBuild,
     store: world.store.stored,
+    storePollution: world.store.pollution,
     outcome: world.outcome,
     lostToFlood: world.lostToFlood,
     ground: encodeBytes(world.ground),
@@ -94,6 +99,7 @@ export function serializeWorld(world: World, name = ''): { data: SaveGame; meta:
     sink: encodeBytes(world.water.sink),
     sources: world.water.sources.map((s) => ({ ...s })),
     depth: encodeFloats(world.water.depth),
+    pollution: encodeFloats(world.water.pollution),
     veg: {
       trees: encodeBytes(world.veg.trees),
       bushes: encodeBytes(world.veg.bushes),
@@ -101,6 +107,7 @@ export function serializeWorld(world: World, name = ''): { data: SaveGame; meta:
       growth: encodeFloats(world.veg.growth),
       stress: encodeFloats(world.veg.stress),
       drown: encodeFloats(world.veg.drown),
+      poison: encodeFloats(world.veg.poison),
     },
     buildings: world.buildings.list.map((b) => ({ ...b, workers: [...b.workers], residents: [...b.residents], stock: { ...b.stock } })),
     citizens: world.citizens.save(),
@@ -120,7 +127,7 @@ export function serializeWorld(world: World, name = ''): { data: SaveGame; meta:
 }
 
 export function restoreWorld(s: SaveGame): World {
-  if (s.v !== SAVE_VERSION) throw new Error(`Spielstand-Version ${s.v} wird nicht unterstützt`);
+  if (!(s.v >= 1 && s.v <= SAVE_VERSION)) throw new Error(`Spielstand-Version ${s.v} wird nicht unterstützt`);
   const n = s.w * s.h;
   const sink = decodeBytes(s.sink);
   const sinks: number[] = [];
@@ -132,12 +139,14 @@ export function restoreWorld(s: SaveGame): World {
   world.gateOpen.set(decodeBytes(s.gateOpen));
   world.syncTerrain();
   world.water.depth.set(decodeFloats(s.depth));
+  if (s.pollution) world.water.pollution.set(decodeFloats(s.pollution));
   world.veg.trees.set(decodeBytes(s.veg.trees));
   world.veg.bushes.set(decodeBytes(s.veg.bushes));
   world.veg.dry.set(decodeBytes(s.veg.dry));
   world.veg.growth.set(decodeFloats(s.veg.growth));
   world.veg.stress.set(decodeFloats(s.veg.stress));
   world.veg.drown.set(decodeFloats(s.veg.drown));
+  if (s.veg.poison) world.veg.poison.set(decodeFloats(s.veg.poison));
   world.veg.version++;
   world.veg.soilVersion++;
   world.buildings.restore(s.buildings);
@@ -148,6 +157,7 @@ export function restoreWorld(s: SaveGame): World {
   world.autoSeasons = s.autoSeasons;
   world.freeBuild = s.freeBuild;
   world.store.stored = s.store;
+  world.store.pollution = s.storePollution ?? 0;
   world.outcome = s.outcome;
   world.lostToFlood = s.lostToFlood;
   world.setWeather(s.weather);
