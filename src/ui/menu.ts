@@ -1,4 +1,4 @@
-import { OTTERTAL, goalText, type Scenario } from '../data/maps';
+import { CAMPAIGN, SCENARIOS, goalText, isUnlocked, nextScenario, type Scenario } from '../data/maps';
 import { CLOUD_SLOTS } from '../online/cloud';
 import { LOCAL_SLOTS, formatSavedAt, slotLabel, type SaveEntry, type Settings } from '../online/saves';
 import type { SimStats } from '../sim/protocol';
@@ -21,9 +21,11 @@ export interface MenuCallbacks {
   onCloudDelete(slot: number): Promise<void>;
   getSettings(): Settings;
   onSettings(s: Settings): void;
+  /** Ids der gewonnenen Kampagnenkarten */
+  campaignWon(): string[];
 }
 
-export type MenuView = 'start' | 'menu' | 'saves' | 'settings' | 'intro' | 'end' | null;
+export type MenuView = 'start' | 'menu' | 'campaign' | 'saves' | 'settings' | 'intro' | 'end' | null;
 
 function metaText(e: SaveEntry | undefined): string {
   if (!e) return 'leer';
@@ -46,6 +48,8 @@ export class Menu {
   private cloudSaves: SaveEntry[] = [];
   private cloudBusy = false;
   private seed = Math.floor(Math.random() * 9000) + 100;
+  /** Stand beim letzten Ende-Dialog, für "Nochmal versuchen" */
+  private lastStats: SimStats | null = null;
 
   constructor(parent: HTMLElement, cb: MenuCallbacks) {
     this.cb = cb;
@@ -91,13 +95,18 @@ export class Menu {
     this.view = 'start';
     this.back = 'start';
     const auto = this.cb.listLocal().find((e) => e.slot === 'auto');
-    const goal = goalText(OTTERTAL.goal);
+    const won = this.cb.campaignWon();
+    const next = CAMPAIGN.find((sc) => !won.includes(sc.id) && isUnlocked(sc.id, won));
+    const wonCount = CAMPAIGN.filter((sc) => won.includes(sc.id)).length;
+    const campaignText = next
+      ? `${wonCount} von ${CAMPAIGN.length} Karten geschafft. Nächste Karte: ${next.name}, etwa ${next.minutes} Minuten.`
+      : `Alle ${CAMPAIGN.length} Karten geschafft. Jede Karte lässt sich nochmal spielen.`;
     this.dialog(
       '',
       `
       <div class="start-title"><span class="logo">Waterwake</span><span class="tagline">Ein Otterclan am wilden Fluss</span></div>
       <div class="start-cards">
-        <button class="start-card" data-act="campaign">${icon('trophy')}<b>${OTTERTAL.name}</b><small>Kampagnenkarte: ${goal}. Etwa 45 Minuten.</small></button>
+        <button class="start-card" data-act="campaign">${icon('trophy')}<b>Kampagne</b><small>${campaignText}</small></button>
         ${auto ? `<button class="start-card" data-act="continue">${icon('play')}<b>Weiterspielen</b><small>${metaText(auto)}</small></button>` : ''}
         <button class="start-card" data-act="saves">${icon('save')}<b>Spielstände</b><small>Laden aus dem Browser oder der Cloud.</small></button>
         <button class="start-card" data-act="settings">${icon('settings')}<b>Einstellungen</b><small>Miniatur-Unschärfe, Schatten.</small></button>
@@ -131,6 +140,27 @@ export class Menu {
         <button class="btn secondary" data-act="settings">${icon('settings')}Einstellungen</button>
         <button class="btn secondary" data-act="main">${icon('menu')}Hauptmenü</button>
       </div>`,
+    );
+  }
+
+  showCampaign(): void {
+    this.view = 'campaign';
+    this.back = 'start';
+    const won = this.cb.campaignWon();
+    const rows = CAMPAIGN.map((sc, i) => {
+      const done = won.includes(sc.id);
+      const open = isUnlocked(sc.id, won);
+      const state = done ? 'Geschafft' : open ? `Etwa ${sc.minutes} Minuten` : `Gesperrt: zuerst ${CAMPAIGN[i - 1].name} gewinnen`;
+      return `<div class="slot${open ? '' : ' locked'}">
+        <div class="slot-info"><b>${i + 1}. ${sc.name}${done ? ` ${icon('trophy')}` : ''}</b><small>${goalText(sc.goal)}. ${state}.</small></div>
+        <button class="btn${done ? ' secondary' : ''}" data-act="play" data-id="${sc.id}" ${open ? '' : 'disabled'}>${done ? 'Nochmal' : 'Spielen'}</button>
+      </div>`;
+    });
+    this.dialog(
+      'Die Otter-Kampagne',
+      `<p class="note">Fünf Karten, jede mit eigenem Tal und eigenem Ziel. Ein Sieg schaltet die nächste Karte frei.</p>
+      ${rows.join('')}
+      <div class="btn-row"><button class="btn secondary" data-act="back">Zurück</button></div>`,
     );
   }
 
@@ -189,7 +219,8 @@ export class Menu {
     this.dialog(
       s.name,
       `${s.intro.map((p) => `<p>${p}</p>`).join('')}
-      <p><b>Ziel:</b> ${goalText(s.goal)}</p>
+      <p><b>Ziel:</b> ${goalText(s.goal)}${s.minutes ? ` (etwa ${s.minutes} Minuten)` : ''}</p>
+      ${s.hint ? `<p class="note"><b>Tipp:</b> ${s.hint}</p>` : ''}
       <div class="btn-row"><button class="btn" data-act="resume">${icon('play')}Los geht's</button></div>`,
       '',
       false,
@@ -198,7 +229,14 @@ export class Menu {
 
   showEnd(stats: SimStats): void {
     this.view = 'end';
+    this.lastStats = stats;
     const won = stats.outcome === 'won';
+    const next = won ? nextScenario(stats.scenario) : null;
+    const goal = stats.goal;
+    const wonText =
+      goal?.kind === 'stausee'
+        ? `Der See in der Schlucht hält, ${stats.population} Otter leben an seinem Ufer. Ihr könnt weiterspielen oder zur nächsten Karte gehen.`
+        : `Der Otterclan hat sich im Tal behauptet: ${stats.population} Otter leben im Jahr ${stats.season.year}. Ihr könnt weiterspielen und den Clan noch größer machen.`;
     const rows = [
       ['Tage überstanden', String(stats.season.day - 1)],
       ['Otter', String(stats.population)],
@@ -209,14 +247,11 @@ export class Menu {
     ];
     this.dialog(
       won ? 'Ziel erreicht' : 'Der Clan ist ausgelöscht',
-      `<p>${
-        won
-          ? `Der Otterclan hat sich im Tal behauptet: ${stats.population} Otter leben im Jahr ${stats.season.year}. Ihr könnt weiterspielen und den Clan noch größer machen.`
-          : 'Der letzte Otter ist gestorben. Beim nächsten Mal: früh eine Pumpe und einen Tank bauen, Deiche gegen die Flutwelle, und Hütten für die Stimmung.'
-      }</p>
+      `<p>${won ? wonText : 'Der letzte Otter ist gestorben. Beim nächsten Mal: früh eine Pumpe und einen Tank bauen, Deiche gegen die Flutwelle, und Hütten für die Stimmung.'}</p>
       <div class="end-stats">${rows.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('')}</div>
       <div class="btn-row">
-        ${won ? `<button class="btn" data-act="resume">${icon('play')}Weiterspielen</button>` : `<button class="btn" data-act="retry">${icon('play')}Nochmal versuchen</button>`}
+        ${next ? `<button class="btn" data-act="play" data-id="${next.id}">${icon('trophy')}Nächste Karte: ${next.name}</button>` : ''}
+        ${won ? `<button class="btn${next ? ' secondary' : ''}" data-act="resume">${icon('play')}Weiterspielen</button>` : `<button class="btn" data-act="retry">${icon('play')}Nochmal versuchen</button>`}
         <button class="btn secondary" data-act="main">${icon('menu')}Hauptmenü</button>
       </div>`,
       '',
@@ -255,11 +290,19 @@ export class Menu {
         else this.showMenu(null);
         break;
       case 'campaign':
-        this.cb.onNewGame(OTTERTAL.id, OTTERTAL.seed, false);
+        this.showCampaign();
         break;
-      case 'retry':
-        this.cb.onNewGame(OTTERTAL.id, OTTERTAL.seed, false);
+      case 'play': {
+        const sc = SCENARIOS[btn.dataset.id ?? ''];
+        if (sc && isUnlocked(sc.id, this.cb.campaignWon())) this.cb.onNewGame(sc.id, sc.seed, false);
         break;
+      }
+      case 'retry': {
+        const last = this.lastStats;
+        if (last) this.cb.onNewGame(last.scenario, last.seed, false);
+        else this.cb.onNewGame(CAMPAIGN[0].id, CAMPAIGN[0].seed, false);
+        break;
+      }
       case 'free': {
         const seedEl = this.root.querySelector('.seed') as HTMLInputElement;
         const freeEl = this.root.querySelector('.freebuild') as HTMLInputElement;

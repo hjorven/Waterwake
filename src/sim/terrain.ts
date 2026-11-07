@@ -13,44 +13,88 @@ export interface MapData {
   sinks: number[];
 }
 
+/** Form eines Tals; die Vorgabe ergibt das Ottertal */
+export interface ValleyParams {
+  /** Mäander: Amplitude der beiden Schwingungen als Anteil der Kartenbreite */
+  meander: [number, number];
+  /** Stärke der Schlucht (1 = Ottertal, 0 = keine) und ihre Lage als Anteil der Kartenhöhe (null = zufällig) */
+  gorge: number;
+  gorgeAt: number | null;
+  /** Flussbett: Höhe am Nordrand und Gefälle bis zum Südrand */
+  bedTop: number;
+  drop: number;
+  /** halbe Breite des Flussbetts in Zellen */
+  halfBed: number;
+  /** Anstieg der Talhänge je Zelle */
+  slope: number;
+  /** Höhe der Hügel: Grundwert und Rauschanteil */
+  hills: number;
+  hillNoise: number;
+  /** Tümpel im Flussbett, die in der Dürre Wasser halten */
+  pools: boolean;
+  /** Stärke der Quelle am Nordrand */
+  sourceRate: number;
+  /** Nebenfluss von der Seite: Zeile als Anteil der Kartenhöhe, Seite und Quellstärke */
+  tributary: { side: 'west' | 'east'; at: number; rate: number } | null;
+}
+
+export const DEFAULT_VALLEY: ValleyParams = {
+  meander: [0.14, 0.08],
+  gorge: 1,
+  gorgeAt: null,
+  bedTop: 7.5,
+  drop: 6,
+  halfBed: 2.2,
+  slope: 0.45,
+  hills: 9,
+  hillNoise: 7,
+  pools: true,
+  sourceRate: 2,
+  tributary: null,
+};
+
 /**
  * Erzeugt ein Flusstal: Der Fluss kommt am Nordrand aus einer Quelle,
  * mäandert nach Süden und verlässt dort die Karte. Seitlich steigen
  * Hügel in Stufen an, an einer Stelle verengt sich das Tal zur Schlucht
- * (guter Platz für einen Damm).
+ * (guter Platz für einen Damm). Mit `params` entstehen andere Täler,
+ * etwa mit Nebenfluss oder ohne Schlucht.
  */
-export function generateValley(w: number, h: number, seed: number): MapData {
+export function generateValley(w: number, h: number, seed: number, params: Partial<ValleyParams> = {}): MapData {
+  const p: ValleyParams = { ...DEFAULT_VALLEY, ...params };
   const rnd = mulberry32(seed);
   const noise = makeValueNoise(seed ^ 0x9e3779b9);
   const ground = new Uint8Array(w * h);
   const phase1 = rnd() * Math.PI * 2;
   const phase2 = rnd() * Math.PI * 2;
-  const gorgeY = h * (0.45 + rnd() * 0.15);
+  const gorgeRoll = rnd();
+  const gorgeY = h * (p.gorgeAt ?? 0.45 + gorgeRoll * 0.15);
 
   const centerX = (y: number) =>
-    w / 2 + Math.sin(y * 0.065 + phase1) * w * 0.14 + Math.sin(y * 0.021 + phase2) * w * 0.08;
+    w / 2 + Math.sin(y * 0.065 + phase1) * w * p.meander[0] + Math.sin(y * 0.021 + phase2) * w * p.meander[1];
 
   // Tümpel im Flussbett: alle paar Zeilen eine Stufe tiefer, damit in der
   // Dürre ein paar Tage lang Wasserlöcher bleiben
   const poolRows = new Set<number>();
   for (let y = 9 + Math.floor(rnd() * 4); y < h - 8; y += 9 + Math.floor(rnd() * 5)) {
+    if (!p.pools) continue;
     poolRows.add(y);
     poolRows.add(y + 1);
   }
 
+  const bedAt = (y: number) => p.bedTop - (y / (h - 1)) * p.drop;
   for (let y = 0; y < h; y++) {
     const cx = centerX(y);
-    const t = y / (h - 1);
     // Flussbett fällt von Nord nach Süd
-    const bed = 7.5 - t * 6;
+    const bed = bedAt(y);
     // Talbreite: an der Schlucht eng
-    const gorge = Math.exp(-((y - gorgeY) ** 2) / (2 * 6 ** 2));
-    const halfBed = 2.2 - gorge * 0.8;
-    const slope = 0.45 + gorge * 1.2;
+    const gorge = p.gorge * Math.exp(-((y - gorgeY) ** 2) / (2 * 6 ** 2));
+    const halfBed = Math.max(0.6, p.halfBed - gorge * 0.8);
+    const slope = p.slope + gorge * 1.2;
     for (let x = 0; x < w; x++) {
       const d = Math.abs(x - cx);
       const n = fbm(noise, x / 14, y / 14, 4);
-      const hills = 9 + n * 7 + gorge * 3;
+      const hills = p.hills + n * p.hillNoise + gorge * 3;
       let hgt: number;
       if (d < halfBed) {
         hgt = poolRows.has(y) ? bed - 1 : bed;
@@ -61,6 +105,39 @@ export function generateValley(w: number, h: number, seed: number): MapData {
         hgt = Math.min(hills, bed + Math.max(0.6, terr) + (n - 0.5) * 2);
       }
       ground[y * w + x] = Math.max(0, Math.min(MAX_HEIGHT, Math.round(hgt)));
+    }
+  }
+
+  // Nebenfluss: ein zweites Bett von der Seite bis zur Mündung in den Fluss
+  const sideSources: { index: number; rate: number }[] = [];
+  if (p.tributary) {
+    const west = p.tributary.side === 'west';
+    const ty = Math.round(h * p.tributary.at);
+    const jx = Math.round(centerX(ty));
+    const len = Math.max(4, west ? jx : w - 1 - jx);
+    const junctionBed = bedAt(ty);
+    const wobble = rnd() * Math.PI * 2;
+    for (let k = 0; k <= len; k++) {
+      const x = west ? k : w - 1 - k;
+      if (x < 0 || x >= w) continue;
+      // f = 1 am Rand, 0 an der Mündung; dort verschwindet die Schlängelung
+      const f = 1 - k / len;
+      const yc = ty + Math.sin(k * 0.12 + wobble) * 3 * f;
+      const bed = junctionBed + f * 2.5;
+      for (let dy = -5; dy <= 5; dy++) {
+        const y = Math.round(yc) + dy;
+        if (y < 1 || y >= h - 1) continue;
+        const d = Math.abs(y - yc);
+        const hgt = d < 1.5 ? bed : bed + (d - 1.5) * 0.9;
+        const i = y * w + x;
+        ground[i] = Math.min(ground[i], Math.max(0, Math.round(hgt)));
+      }
+    }
+    const ex = west ? 1 : w - 2;
+    for (let dy = -1; dy <= 1; dy++) {
+      const i = (ty + dy) * w + ex;
+      ground[i] = Math.min(ground[i], Math.round(junctionBed + 2.5));
+      sideSources.push({ index: i, rate: p.tributary.rate });
     }
   }
 
@@ -91,9 +168,10 @@ export function generateValley(w: number, h: number, seed: number): MapData {
   const sx = Math.round(centerX(1));
   for (let dx = -1; dx <= 1; dx++) {
     const i = 1 * w + sx + dx;
-    ground[i] = Math.min(ground[i], Math.round(7.5));
-    sources.push({ index: i, rate: 2 });
+    ground[i] = Math.min(ground[i], Math.round(p.bedTop));
+    sources.push({ index: i, rate: p.sourceRate });
   }
+  sources.push(...sideSources);
 
   // Senke: tiefe Zellen am Südrand
   const sinks: number[] = [];

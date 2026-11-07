@@ -1,5 +1,6 @@
 import { BUILDINGS, BUILDING_ORDER, CATEGORY_LABEL, DAM_WOOD_PER_LEVEL, DRINK_SPOTS, GATE_WOOD, type BuildingCategory, type BuildingId } from '../data/buildings';
 import { costText, FOODS, GOOD_LABEL, GOODS } from '../data/goods';
+import { goalText } from '../data/maps';
 import { TECH_FOR, TECH_ORDER, TECHS, type TechId } from '../data/tech';
 import type { BuildingSnap, SimStats } from '../sim/protocol';
 import { MAX_DAM, MAX_DIKE, WEATHER_INFO, type Tool, type Weather } from '../sim/world';
@@ -519,7 +520,7 @@ export class Hud {
       info.day, info.year, s.weather, info.daysLeft, info.next, info.nextMin, info.nextMax,
       s.population, s.children, s.sick, s.housing, Math.floor(s.wood), s.storageCap, Math.floor(s.food), Math.floor(s.water), s.waterCap,
       Math.round(s.mood * 20), s.outcome, s.scenario, pollutionLabel(s.waterPollution), s.hasPower, fmt(s.power.supply), fmt(s.power.demand),
-      Math.floor(s.goods.bretter), Math.floor(s.knowledge), s.hasKnowledge, s.toolBonus, s.techs.length,
+      Math.floor(s.goods.bretter), Math.floor(s.knowledge), s.hasKnowledge, s.toolBonus, s.techs.length, s.deepCells, Math.floor(s.goalDays),
     ].join('|');
     if (key === this.lastStatsKey) return;
     this.lastStatsKey = key;
@@ -537,9 +538,14 @@ export class Hud {
     if (s.goal) {
       const done = s.outcome === 'won';
       const popOk = s.population >= s.goal.population;
-      const yearOk = info.year >= s.goal.year;
-      this.goal.innerHTML = `${icon(done ? 'trophy' : 'ziel')}<div class="goal-text"><b>${done ? 'Ziel erreicht' : 'Ziel'}</b><small><span class="${popOk ? 'ok' : ''}">${s.population}/${s.goal.population} Otter</span> · <span class="${yearOk ? 'ok' : ''}">Jahr ${info.year}/${s.goal.year}</span></small></div>`;
-      this.goal.title = `${s.scenarioName}: ${s.goal.population} Otter und das Jahr ${s.goal.year} erreichen`;
+      const parts = [`<span class="${popOk ? 'ok' : ''}">${s.population}/${s.goal.population} Otter</span>`];
+      if (s.goal.kind === 'clan') {
+        parts.push(`<span class="${info.year >= s.goal.year ? 'ok' : ''}">Jahr ${info.year}/${s.goal.year}</span>`);
+      } else {
+        parts.unshift(`<span class="${s.deepCells >= s.goal.cells ? 'ok' : ''}">See ${s.deepCells}/${s.goal.cells}</span>`, `<span class="${s.goalDays >= s.goal.days ? 'ok' : ''}">${Math.floor(s.goalDays)}/${s.goal.days} Tage</span>`);
+      }
+      this.goal.innerHTML = `${icon(done ? 'trophy' : 'ziel')}<div class="goal-text"><b>${done ? 'Ziel erreicht' : 'Ziel'}</b><small>${parts.join(' · ')}</small></div>`;
+      this.goal.title = `${s.scenarioName}: ${goalText(s.goal)}`;
     } else {
       this.goal.innerHTML = `${icon('ziel')}<div class="goal-text"><b>Freies Spiel</b><small>kein Ziel</small></div>`;
       this.goal.title = s.scenarioName;

@@ -28,6 +28,8 @@ export interface SaveGame {
   techs?: TechId[];
   outcome: Outcome;
   lostToFlood: number;
+  /** Stausee-Ziel: Sekunden, die der See schon gehalten wird (ab Version 4) */
+  goalHeld?: number;
   ground: string;
   struct: string;
   gate: string;
@@ -101,6 +103,7 @@ export function serializeWorld(world: World, name = ''): { data: SaveGame; meta:
     techs: [...world.techs],
     outcome: world.outcome,
     lostToFlood: world.lostToFlood,
+    goalHeld: world.goalHeld,
     ground: encodeBytes(world.ground),
     struct: encodeBytes(world.struct),
     gate: encodeBytes(world.gate),
@@ -180,6 +183,7 @@ export function restoreWorld(s: SaveGame): World {
   for (const t of s.techs ?? []) world.techs.add(t);
   world.outcome = s.outcome;
   world.lostToFlood = s.lostToFlood;
+  world.goalHeld = s.goalHeld ?? 0;
   world.setWeather(s.weather);
   world.veg.updateMoisture(world.water.depth);
   return world;

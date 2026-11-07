@@ -41,6 +41,13 @@ Spielen: https://hjorven.github.io/Waterwake/
   bekommen ein Floß, der Flößer fährt mit und bringt Waren dorthin, wo sie
   knapp sind, solange der Fluss durchgehend Wasser führt (in der Dürre nicht).
   Der Holzsteg macht eine Wasserzelle begehbar. Technik Flößerei.
+- **M5, Teil 1: Otter-Kampagne**: Fünf Karten mit eigenem Tal, eigenem
+  Jahreslauf und eigenem Ziel: Das Ottertal (16 Otter, Jahr 3), Die Schlucht
+  (einen Stausee mit 60 Zellen von 2 Tiefe zwei Tage halten), Das Dürreland
+  (Dürren von 14 bis 20 Tagen, 12 Otter, Jahr 3), Das Delta (Nebenfluss und
+  Flutwellen vom ersten Jahr an, 30 Otter, Jahr 4) und Der große Clan (60 Otter,
+  Jahr 5). Ein Sieg schaltet die nächste Karte frei, der Fortschritt bleibt im
+  Browser. `?karte=schlucht` öffnet eine Karte direkt.
 
 ## Steuerung
 
