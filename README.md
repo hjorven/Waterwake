@@ -65,6 +65,14 @@ Spielen: https://hjorven.github.io/Waterwake/
   der neuesten Karten steht im selben Menü. Spielstände auf eigenen Karten
   betten die Karte ein (Spielstand Version 5). `?editor` oder
   `?editor&seed=42` öffnet den Editor direkt.
+- **M6, Teil 1: Das Molchvolk**: Ein zweites Volk mit eigener Kampagne
+  (Lagune, Schlammtal, Hochland), offen nach dem ersten Sieg im Ottertal.
+  Molche bauen mit Stein statt Holz, ihre Höhlen und die Grotte stehen im
+  flachen Wasser, der Steinbruch bricht Stein aus dem Hang, die Algenfarm
+  liefert Algen, das Kiesbecken reinigt den Wasserspeicher und der Laichplatz
+  bringt mehr Nachwuchs. Sie schwimmen schneller als sie laufen, trinken in der
+  Dürre doppelt so viel und leiden stärker unter schmutzigem Wasser. Das freie
+  Spiel lässt das Volk wählen.
 
 ## Steuerung
 
@@ -82,7 +90,8 @@ URL-Parameter: `?karte=ottertal` startet die Kampagne direkt, `?seed=12`
 startet ein freies Spiel auf einer anderen Karte, `?frei` macht Wasserbau
 kostenlos und schaltet alle Techniken frei, `?alles` schaltet nur die Techniken
 frei, `?flach` schaltet den Tilt-Shift-Effekt ab, `?editor` (auch mit
-`&seed=42`) öffnet den Karteneditor, `?code=ABC234` lädt eine geteilte Karte.
+`&seed=42`) öffnet den Karteneditor, `?code=ABC234` lädt eine geteilte Karte, `?frei&volk=molch` startet das freie
+Spiel mit dem Molchvolk.
 
 ## Spielstände in der Cloud
 

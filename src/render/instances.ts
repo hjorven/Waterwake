@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { BuildingId } from '../data/buildings';
+import type { Species } from '../data/species';
 import { CITIZEN_STRIDE, RAFT_STRIDE, type BuildingSnap } from '../sim/protocol';
 import {
   BUILDING_IDS,
@@ -8,6 +9,7 @@ import {
   bushGeometry,
   CARRY_CODES,
   carryGeometry,
+  molchGeometry,
   otterGeometry,
   raftCargoGeometry,
   raftGeometry,
@@ -49,6 +51,13 @@ class Pool {
     this.parent.remove(this.mesh);
     this.mesh.dispose();
     this.mesh = this.make(Math.max(n, Math.ceil(this.mesh.instanceMatrix.count * 1.5)));
+  }
+
+  /** Mesh und Geometrie freigeben, etwa beim Wechsel des Bewohnermodells */
+  dispose(): void {
+    this.parent.remove(this.mesh);
+    this.mesh.dispose();
+    this.geo.dispose();
   }
 }
 
@@ -119,7 +128,9 @@ export class InstanceRenderer {
   private readonly berries: Pool;
   private readonly buildings = new Map<BuildingId, Pool>();
   private readonly sites = new Map<number, Pool>();
-  private readonly otters: Pool;
+  /** Bewohner, je nach Volk Otter oder Molche */
+  private otters: Pool;
+  private species: Species = 'otter';
   /** getragene Waren je Kennziffer */
   private readonly carried = new Map<number, Pool>();
   private readonly rafts: Pool;
@@ -144,6 +155,14 @@ export class InstanceRenderer {
     for (const code of CARRY_CODES) this.carried.set(code, new Pool(this.group, carryGeometry(code), 16));
     this.rafts = new Pool(this.group, raftGeometry(), 8);
     for (const code of CARRY_CODES) this.raftCargo.set(code, new Pool(this.group, raftCargoGeometry(code), 8));
+  }
+
+  /** Bewohnermodell wechseln: Otter oder Molch */
+  setSpecies(id: Species): void {
+    if (id === this.species) return;
+    this.species = id;
+    this.otters.dispose();
+    this.otters = new Pool(this.group, id === 'molch' ? molchGeometry() : otterGeometry(), 64, true);
   }
 
   setTerrain(ground: Uint8Array<ArrayBufferLike>, struct: Uint8Array<ArrayBufferLike>): void {

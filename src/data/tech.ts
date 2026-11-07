@@ -15,7 +15,8 @@ export type TechId =
   | 'geselligkeit'
   | 'muehlenbau'
   | 'maschinen'
-  | 'flosserei';
+  | 'flosserei'
+  | 'steinkunst';
 
 export interface TechDef {
   id: TechId;
@@ -142,6 +143,14 @@ export const TECHS: Record<TechId, TechDef> = {
     requires: 'muehlenbau',
     unlocks: ['pumpwerk', 'sandfilter'],
   },
+  steinkunst: {
+    id: 'steinkunst',
+    name: 'Steinkunst',
+    desc: 'Behauener Stein für die Grotte mit zehn Betten, Statuen und einen Aussichtsturm.',
+    cost: 14,
+    requires: null,
+    unlocks: ['grotte', 'statue', 'aussichtsturm'],
+  },
   flosserei: {
     id: 'flosserei',
     name: 'Flößerei',
@@ -153,10 +162,29 @@ export const TECHS: Record<TechId, TechDef> = {
 };
 
 export const TECH_ORDER: TechId[] = [
-  'schrift', 'geselligkeit', 'heilkunde', 'fischfang', 'ackerbau', 'brunnenbau', 'zimmerei',
+  'schrift', 'geselligkeit', 'heilkunde', 'fischfang', 'ackerbau', 'brunnenbau', 'zimmerei', 'steinkunst',
   'sternkunde', 'teichwirtschaft', 'backkunst', 'schnitzkunst', 'pfahlbau', 'flosserei', 'muehlenbau', 'maschinen',
 ];
 
-/** Technologie, die ein Gebäude freischaltet (fehlt bei Gebäuden, die von Anfang an gehen) */
-export const TECH_FOR: Partial<Record<BuildingId, TechId>> = {};
-for (const t of TECH_ORDER) for (const b of TECHS[t].unlocks) TECH_FOR[b] = t;
+/**
+ * Technologie, die ein Gebäude freischaltet, je Volk (fehlt bei Gebäuden, die von
+ * Anfang an gehen). Statue und Aussichtsturm hängen bei Ottern an Schnitzkunst
+ * und Pfahlbau, bei Molchen an der Steinkunst.
+ */
+export function techTable(techs: TechId[]): Partial<Record<BuildingId, TechId>> {
+  const out: Partial<Record<BuildingId, TechId>> = {};
+  for (const t of TECH_ORDER) if (techs.includes(t)) for (const b of TECHS[t].unlocks) out[b] = t;
+  return out;
+}
+
+/**
+ * Voraussetzung einer Technik für ein Volk: nur eine Technik, die das Volk selbst
+ * erforschen kann, zählt (Mühlenbau braucht bei Ottern Zimmerei, Molche kennen keine).
+ */
+export function requiredFor(id: TechId, techs: TechId[]): TechId | null {
+  const req = TECHS[id].requires;
+  return req && techs.includes(req) ? req : null;
+}
+
+/** Freischaltung für den Otterclan (Vorgabe) */
+export const TECH_FOR: Partial<Record<BuildingId, TechId>> = techTable(TECH_ORDER.filter((t) => t !== 'steinkunst'));

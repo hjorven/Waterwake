@@ -1,4 +1,6 @@
 import { BUILDINGS, DRINK_SPOTS, type BuildingId } from '../data/buildings';
+import type { SpeciesDef } from '../data/species';
+import type { Weather } from './world';
 import { type Good } from '../data/goods';
 import type { Building, Buildings } from './buildings';
 import type { Pathfinder } from './pathfinding';
@@ -32,7 +34,11 @@ type TaskKind =
   | 'ferry'
   | 'tend'
   | 'harvest'
-  | 'deliver';
+  | 'deliver'
+  /** Stein brechen (Steinbruch) */
+  | 'mine'
+  /** Wasser im Kiesbecken reinigen */
+  | 'filter';
 
 /** Schichtarbeit am Gebäude selbst: Aufgaben, bei denen der Otter eine Weile am Arbeitsplatz bleibt */
 export type ShiftKind = 'tread' | 'heal' | 'serve' | 'study';
@@ -123,6 +129,9 @@ export interface Env {
   veg: Vegetation;
   path: Pathfinder;
   rafts: Rafts;
+  /** das Volk mit seinen Regeln */
+  species: SpeciesDef;
+  weather: Weather;
   walkable(i: number): boolean;
   /** darf man von Zelle a nach b treten (Höhenunterschied) */
   canStep(a: number, b: number): boolean;
@@ -153,8 +162,6 @@ const NAMES = [
   'Nebel', 'Funke', 'Birke', 'Dotter', 'Fluse', 'Knirps', 'Mala', 'Rille', 'Sumpf', 'Tilda',
 ];
 
-const WALK_SPEED = 2.6;
-const SWIM_SPEED = 1.3;
 const PUMP_RATE = 0.2;
 const DRINK_AT = 0.35;
 const EAT_AT = 0.35;
@@ -199,6 +206,13 @@ const POND_TIME = 15;
 const POND_FISH = 2;
 const POND_WATER = 1;
 const HARVEST_TIME = 6;
+/** Steinbruch: Zeit je Brocken und Stein je Gang */
+const MINE_TIME = 5;
+const STONE_PER_TRIP = 2;
+/** Hänge ab so vielen Stufen über dem Steinbruch geben Stein */
+const ROCK_STEP = 2;
+/** Kiesbecken: so viel Verschmutzung nimmt eine Schicht aus dem Speicher */
+const KIES_CLEAN = 0.1;
 /** Werkzeugverbrauch je Arbeiter und Tag; mit Werkzeug für alle arbeitet der Clan schneller */
 const TOOLS_PER_WORKER = 0.25;
 export const TOOL_PACE = 1.25;
@@ -352,9 +366,11 @@ export class Citizens {
       this.dayTimer -= DAY;
       this.daily();
     }
+    // Molche brauchen feuchte Haut: in der Dürre trinken sie doppelt so viel
+    const thirst = this.env.weather === 'duerre' ? this.env.species.droughtThirst : 1;
     for (const c of this.list) {
       if (!c.alive) continue;
-      c.water -= dt / (WATER_DAYS * DAY);
+      c.water -= (dt * thirst) / (WATER_DAYS * DAY);
       c.food -= dt / (FOOD_DAYS * DAY);
       if (c.water <= 0 || c.food <= 0) {
         this.die(c, c.water <= 0 ? 'verdurstet' : 'verhungert');
@@ -392,6 +408,9 @@ export class Citizens {
       if (home) {
         t += 0.15;
         if (home.flooded) t -= 0.15;
+        // Molche wollen Wasser am Haus, im Trockenen leiden sie
+        const sp = env.species;
+        if (sp.wetHomeMood || sp.dryHomeMood) t += env.buildings.maxDepthOn(home, env.depth) > 0.1 ? sp.wetHomeMood : sp.dryHomeMood;
       } else {
         t -= 0.25;
       }
@@ -421,7 +440,7 @@ export class Citizens {
 
   /** Schmutziges Wasser getrunken */
   private harm(c: Citizen, pollution: number): void {
-    c.health = Math.max(0, c.health - pollution * DIRT_HARM);
+    c.health = Math.max(0, c.health - pollution * DIRT_HARM * this.env.species.dirtHarm);
     if (c.health <= 0) this.die(c, 'an der Schlammkrankheit gestorben');
   }
 
@@ -458,7 +477,9 @@ export class Citizens {
     }
     if (adults < 2) return;
     const factor = Math.max(0, Math.min(1, (moodSum / adults - 0.45) / 0.4));
-    this.birthProgress += BIRTH_RATE * (adults / 2) * factor;
+    // ein Laichplatz im Wasser bringt den Molchen mehr Nachwuchs
+    const spawn = [...b.alive()].some((h) => h.built && h.def === 'laichplatz') ? 1.3 : 1;
+    this.birthProgress += BIRTH_RATE * spawn * (adults / 2) * factor;
     while (this.birthProgress >= 1 && this.count() < housing) {
       this.birthProgress -= 1;
       if (!this.birth()) break;
@@ -479,7 +500,7 @@ export class Citizens {
     c.home = hut.id;
     hut.residents.push(c.id);
     this.births++;
-    env.log(`Ein Otterjunges ist geboren: ${c.name}.`);
+    env.log(`${env.species.young}: ${c.name}.`);
     return true;
   }
 
@@ -756,6 +777,21 @@ export class Citizens {
         c.cooldown = 6;
         return true;
       }
+      case 'steinbruch': {
+        // Stein kommt aus Hängen im Umkreis, die deutlich höher liegen; gebrochen wird vom Fuß des Hangs aus
+        const base = env.ground[wp.y * env.w + wp.x];
+        if (this.goToShore(c, task('mine', wp.id), ctr, def.range, (i) => env.ground[i] >= base + ROCK_STEP && env.depth[i] < 0.1 && env.buildings.occ[i] < 0 && env.struct[i] === 0, true)) return true;
+        c.cooldown = 6;
+        return true;
+      }
+      case 'kiesbecken': {
+        // ohne Wasser oder Schmutz im Speicher gibt es nichts zu reinigen
+        if (env.store.stored < 1 || env.store.pollution < 0.02) {
+          c.cooldown = 6;
+          return true;
+        }
+        return this.startTask(c, task('filter', wp.id), b.ring(wp));
+      }
       case 'fischteich': {
         if (env.store.stored < POND_WATER || !b.storageSpace('fisch', POND_FISH, ctr.x, ctr.y)) {
           c.cooldown = 6;
@@ -1019,7 +1055,7 @@ export class Citizens {
     const here = this.cell(c);
     const swimming = env.depth[here] > 0.25;
     const slow = c.child ? 0.8 : 1;
-    let budget = (swimming ? SWIM_SPEED : WALK_SPEED) * slow * dt;
+    let budget = (swimming ? env.species.swimSpeed : env.species.walkSpeed) * slow * dt;
     while (budget > 0) {
       const dx = tx - c.x;
       const dy = ty - c.y;
@@ -1127,8 +1163,13 @@ export class Citizens {
       case 'tread':
       case 'heal':
       case 'study':
+      case 'filter':
         c.state = 'work';
         t.timer = SHIFT_TIME;
+        break;
+      case 'mine':
+        c.state = 'work';
+        t.timer = MINE_TIME;
         break;
       case 'serve':
         c.state = 'work';
@@ -1241,12 +1282,14 @@ export class Citizens {
       case 'tread':
       case 'heal':
       case 'serve':
-      case 'study': {
+      case 'study':
+      case 'filter': {
         if (c.water < DRINK_AT || c.food < EAT_AT) {
           this.finish(c, 0);
           return;
         }
         if (t.timer > 0) return;
+        if (t.kind === 'filter') env.store.pollution = Math.max(0, env.store.pollution - KIES_CLEAN);
         if (t.kind === 'study') {
           const wp = b.get(t.building);
           if (wp) env.addKnowledge(BUILDINGS[wp.def].knowledge);
@@ -1265,6 +1308,15 @@ export class Citizens {
         }
         c.carry = 'fisch';
         c.carryAmount = FISH_PER_CATCH;
+        if (!this.deliverCarried(c)) this.finish(c, 3);
+        return;
+      }
+      case 'mine': {
+        if (t.timer > 0) return;
+        env.reserved.delete(t.target);
+        t.target = -1;
+        c.carry = 'stein';
+        c.carryAmount = STONE_PER_TRIP;
         if (!this.deliverCarried(c)) this.finish(c, 3);
         return;
       }

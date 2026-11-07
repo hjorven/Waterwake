@@ -123,7 +123,7 @@ function useWorld(w: World, loaded: boolean): void {
   acc = 0;
   inflow = outflow = evap = 0;
   lastAutoDay = w.seasons.info().day;
-  post({ type: 'ready', w: w.w, h: w.h, scenario: w.scenario.id, loaded, editor: w.editor });
+  post({ type: 'ready', w: w.w, h: w.h, scenario: w.scenario.id, loaded, editor: w.editor, species: w.species.id });
 }
 
 function tick(): void {
@@ -243,6 +243,7 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
     case 'init': {
       const scenario = msg.custom ? customScenario(msg.custom) : msg.scenario === 'frei' ? freeScenario(msg.seed, msg.w, msg.h) : scenarioById(msg.scenario, msg.seed);
       const w = World.fromScenario(scenario);
+      if (msg.species) w.setSpecies(msg.species);
       w.freeBuild = !!msg.freeBuild;
       w.editor = !!msg.editor;
       // im Editor bleibt das Wetter normal, damit der Fluss ruhig fließt
