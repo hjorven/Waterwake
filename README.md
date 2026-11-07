@@ -83,6 +83,14 @@ Spielen: https://hjorven.github.io/Waterwake/
   der Rest bleibt Grundwert; wer länger als 15 Minuten nichts meldet, wird
   übersprungen. Die Leiste zeigt den Zufluss von oben, das Menü die Kette mit
   den Nachbarn.
+- **M6, Teil 3: Errungenschaften und Klang**: 40 Errungenschaften in sechs
+  Gruppen (Siedlung, Jahreslauf, Bauten und Forschung, Wasserbau, Kampagne,
+  weite Welt), gespeichert im Browser unter `waterwake.achievements`, mit
+  Einblendung beim Erreichen und Übersicht im Start- und Spielmenü. Klang ohne
+  Dateien aus Web Audio (`src/ui/sound.ts`): Wasserrauschen je Wetter, Regen
+  mit Tropfen in der Schneeschmelze, Töne für Bauen, Abreißen, Gelände,
+  Meldungen, Forschung, Sieg und Niederlage; Lautstärke in den Einstellungen,
+  Ton gibt es erst nach der ersten Eingabe.
 
 ## Steuerung
 

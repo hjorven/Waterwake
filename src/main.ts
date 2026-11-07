@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import './style.css';
+import { evaluate, type GameView } from './data/achievements';
 import { BUILDINGS, type BuildingId } from './data/buildings';
 import { costText } from './data/goods';
 import { CUSTOM_ID, coreFromData, customScenario, flatMap, isMapCode, newMapId, normalizeCode, type CustomMap, type MapCore } from './data/custom';
@@ -12,6 +13,7 @@ import { cloudConnect, cloudDelete, cloudDownload, cloudHasAccount, cloudList, c
 import {
   deleteLocalSave,
   deleteMap,
+  loadAchievements,
   listLocalSaves,
   loadMaps,
   loadCampaign,
@@ -20,6 +22,7 @@ import {
   loadSettings,
   markCampaignWon,
   readLocalSave,
+  saveAchievements,
   saveName as savePlayerName,
   saveRiver,
   saveSettings,
@@ -39,13 +42,18 @@ import type { BuildingSnap, FromWorker, SimStats, ToWorker } from './sim/protoco
 import type { SaveGame, SaveMeta } from './sim/save';
 import type { Outcome, Tool, Weather } from './sim/world';
 import SimWorker from './sim/worker?worker';
-import { Hud, type Mode } from './ui/hud';
+import { Hud, messageTone, type Mode } from './ui/hud';
 import { Menu, type DailyScore } from './ui/menu';
+import { Sound } from './ui/sound';
 
 const params = new URLSearchParams(location.search);
 const app = document.getElementById('app')!;
 const settings: Settings = loadSettings();
 if (params.has('flach')) settings.tiltShift = false;
+const sound = new Sound();
+sound.setVolume(settings.volume);
+/** Errungenschaften und ihre Zähler, liegen im Browser */
+const ach = loadAchievements();
 /** Volk des laufenden Spiels, kommt mit 'ready' aus der Simulation */
 let currentSpecies: Species = 'otter';
 let techFor = techTable(SPECIES.otter.techs);
@@ -207,6 +215,14 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
       running = true;
       editorMode = msg.editor;
       if (!msg.editor) editing = null;
+      achWeather = null;
+      builtCount = -1;
+      if (!msg.editor && !msg.loaded) {
+        ach.counters.games++;
+        if (msg.scenario === CUSTOM_ID) ach.counters.customPlayed++;
+        saveAchievements(ach);
+      }
+      sound.setScene(true, true);
       hud.setEditor(msg.editor);
       updateMarks();
       if (msg.editor) {
@@ -253,6 +269,13 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
       }
       instances.setBuildings(buildings);
       hud.refreshBuilding(buildings);
+      {
+        let n = 0;
+        for (const b of buildings) if (b.built) n++;
+        if (builtCount >= 0 && n > builtCount) sound.built();
+        builtCount = n;
+        achDirty = true;
+      }
       break;
     case 'water':
       depth = msg.depth;
@@ -263,17 +286,28 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
       raftCount = msg.raftCount;
       stats = msg.stats;
       hud.setStats(stats);
-      if (msg.messages.length) hud.pushMessages(msg.messages);
+      if (msg.messages.length) {
+        hud.pushMessages(msg.messages);
+        for (const text of msg.messages) {
+          if (/erforscht\./.test(text)) sound.research();
+          else sound.message(messageTone(text));
+        }
+      }
       applyWeatherLook(stats.weather);
+      trackWeather(stats);
       if (stats.outcome !== shownOutcome) {
         shownOutcome = stats.outcome;
+        if (stats.outcome === 'won') sound.win();
+        else if (stats.outcome === 'lost') sound.lose();
         if (stats.outcome === 'won' && campaignIndex(stats.scenario) >= 0) markCampaignWon(stats.scenario);
         if (stats.outcome === 'lost' && stats.scenario === DAILY_ID) autoSubmitDaily();
+        achDirty = true;
         if (stats.outcome && !menu.open) {
           setSpeed(0);
           menu.showEnd(stats);
         }
       }
+      checkAchievements();
       break;
     case 'saved':
       onSaved(msg.slot, msg.data, msg.meta);
@@ -353,6 +387,7 @@ function setSpeed(s: number): void {
   speed = s;
   send({ type: 'speed', speed: s });
   hud.setSpeed(s);
+  sound.setScene(running, s === 0);
 }
 
 function startGame(scenario: string, seed: number, freeBuild: boolean, species?: Species): void {
@@ -435,6 +470,10 @@ async function submitDaily(name: string): Promise<DailyResult> {
   try {
     const r = await dailySubmit(cur.key, name, cur.score, cur.days, cur.population);
     dailyDone = { key: cur.key, score: Math.max(r.score, cur.score) };
+    if (ach.counters.lastDaily !== cur.key) {
+      ach.counters.lastDaily = cur.key;
+      bump('dailyDays');
+    }
     return r;
   } catch (err) {
     dailyDone = before;
@@ -450,6 +489,88 @@ function autoSubmitDaily(): void {
     (r) => menu.toast(r.improved ? `Wertung eingetragen: ${r.score} Punkte, Platz ${r.rank} von ${r.total}.` : `Deine beste Wertung heute bleibt ${r.score} Punkte, Platz ${r.rank}.`),
     (err: Error) => menu.toast(`Bestenliste: ${err.message}`, true),
   );
+}
+
+// --- Errungenschaften ---------------------------------------------------------
+let achWeather: Weather | null = null;
+/** weggerissene Gebäude zu Beginn der laufenden Schneeschmelze */
+let floodLost = 0;
+let builtCount = -1;
+let achDirty = false;
+let achLast = 0;
+
+/** Blick auf das laufende Spiel für die Errungenschaften */
+function gameView(): GameView | null {
+  if (!stats || stats.editor || !running) return null;
+  const built: Partial<Record<BuildingId, number>> = {};
+  for (const b of buildings) if (b.built) built[b.def] = (built[b.def] ?? 0) + 1;
+  let damCells = 0;
+  let gateCells = 0;
+  for (let i = 0; i < struct.length; i++) {
+    if (gate[i] > 0) gateCells++;
+    else if (struct[i] > 0) damCells++;
+  }
+  return {
+    species: stats.species,
+    population: stats.population,
+    births: stats.births,
+    deaths: stats.deaths,
+    lostToFlood: stats.lostToFlood,
+    mood: stats.mood,
+    year: stats.season.year,
+    techs: stats.techs,
+    toolBonus: stats.toolBonus,
+    raftTrips: stats.raftTrips,
+    powerSupply: stats.power.supply,
+    waterCap: stats.waterCap,
+    outcome: stats.outcome,
+    goalKind: stats.goal?.kind ?? null,
+    built,
+    damCells,
+    gateCells,
+  };
+}
+
+/** Wetterwechsel zählen: überstandene Dürren, Schmelzen ohne Verlust, Schlammfluten */
+function trackWeather(s: SimStats): void {
+  if (s.editor) return;
+  const w = s.weather;
+  if (achWeather === null) {
+    achWeather = w;
+    floodLost = s.lostToFlood;
+    return;
+  }
+  if (w === achWeather) return;
+  const prev = achWeather;
+  achWeather = w;
+  if (w === 'schmelze') floodLost = s.lostToFlood;
+  if (s.population <= 0) return;
+  if (prev === 'duerre') ach.counters.droughts++;
+  else if (prev === 'schmelze' && s.lostToFlood === floodLost) ach.counters.floods++;
+  else if (prev === 'schlamm') ach.counters.muds++;
+  else return;
+  saveAchievements(ach);
+  achDirty = true;
+}
+
+/** Offene Errungenschaften prüfen, höchstens einmal je Sekunde, sofort wenn sich etwas getan hat */
+function checkAchievements(force = false): void {
+  const now = performance.now();
+  if (!force && !achDirty && now - achLast < 1000) return;
+  achLast = now;
+  achDirty = false;
+  const fresh = evaluate(ach, { game: gameView(), won: loadCampaign(), counters: ach.counters });
+  if (!fresh.length) return;
+  saveAchievements(ach);
+  for (const a of fresh) menu.toastAchievement(a.title);
+  sound.achievement();
+}
+
+/** Zähler erhöhen, sichern und gleich prüfen */
+function bump(key: 'dailyDays' | 'mapsShared' | 'riverJoined'): void {
+  ach.counters[key]++;
+  saveAchievements(ach);
+  checkAchievements(true);
 }
 
 // --- Flusskette ---------------------------------------------------------------
@@ -547,10 +668,12 @@ const menu = new Menu(app, {
   riverLink: () => river,
   onRiverCreate: async (name, player) => {
     setRiver(await riverCreate(name, player));
+    bump('riverJoined');
     await riverTick();
   },
   onRiverJoin: async (code, player) => {
     setRiver(await riverJoin(code, player));
+    bump('riverJoined');
     await riverTick();
   },
   onRiverLeave: async () => {
@@ -559,6 +682,7 @@ const menu = new Menu(app, {
     setRiver(null);
   },
   onRiverRefresh: () => riverRefresh(),
+  achievements: () => ach,
   listMaps: () => loadMaps(),
   onEditorNew: (seed) => {
     menu.hide();
@@ -584,6 +708,7 @@ const menu = new Menu(app, {
     const shared = { ...map, code };
     upsertMap(shared);
     editing = shared;
+    bump('mapsShared');
     return code;
   },
   onMapDownload: async (code) => {
@@ -594,13 +719,18 @@ const menu = new Menu(app, {
   onMapList: () => mapList(),
   editing: () => editing,
   onSettings: (s) => {
+    const shadowsChanged = s.shadows !== settings.shadows;
     Object.assign(settings, s);
     saveSettings(settings);
+    sound.setVolume(settings.volume);
     postfx.enabled = settings.tiltShift;
-    renderer.shadowMap.enabled = settings.shadows;
-    scene.traverse((o) => {
-      if (o instanceof THREE.Mesh) o.material.needsUpdate = true;
-    });
+    // Schatten umschalten heißt alle Materialien neu übersetzen, das lohnt nur bei echter Änderung
+    if (shadowsChanged) {
+      renderer.shadowMap.enabled = settings.shadows;
+      scene.traverse((o) => {
+        if (o instanceof THREE.Mesh) o.material.needsUpdate = true;
+      });
+    }
   },
 });
 
@@ -612,7 +742,9 @@ const hud = new Hud(app, {
   onSpeed: (s) => setSpeed(s),
   onDemolish: (id) => {
     const b = buildings.find((x) => x.id === id);
-    if (b) send({ type: 'demolish', cell: b.y * MAP_W + b.x });
+    if (!b) return;
+    send({ type: 'demolish', cell: b.y * MAP_W + b.x });
+    sound.demolish();
   },
   onResearch: (tech) => send({ type: 'research', tech }),
   onMenu: () => openMenu(),
@@ -626,6 +758,7 @@ let shownWeather: Weather | null = null;
 function applyWeatherLook(weather: Weather): void {
   if (weather === shownWeather) return;
   shownWeather = weather;
+  sound.setWeather(weather);
   const c = weather === 'duerre' ? skyDry : weather === 'schmelze' ? skyMelt : skyNormal;
   (scene.background as THREE.Color).copy(c);
   scene.fog!.color.copy(c);
@@ -731,6 +864,7 @@ function applyTool(i: number): void {
   const tool = mode.tool;
   if (tool === 'abreissen' && occ[i] >= 0) {
     send({ type: 'demolish', cell: i });
+    sound.demolish();
     return;
   }
   const brush = tool === 'schleuse' || tool === 'start' ? 1 : hud.brush;
@@ -738,6 +872,7 @@ function applyTool(i: number): void {
   if (cells.length === 0) return;
   for (const c of cells) painted.add(c);
   send({ type: 'edit', tool, cells, damHeight: hud.damHeight });
+  sound.dig();
 }
 
 function clickAt(i: number): void {
@@ -747,6 +882,7 @@ function clickAt(i: number): void {
     if (placementError(mode.id, x, y)) return;
     send({ type: 'place', id: mode.id, x, y });
     markOccupied(mode.id, x, y);
+    sound.place();
     return;
   }
   if (mode.kind === 'tool') {
@@ -897,6 +1033,7 @@ hud.setRiver(river ? river.name : null);
     riverJoin(code, loadName()).then(
       (link) => {
         setRiver(link);
+        bump('riverJoined');
         if (menu.view === 'start') menu.showStart();
         menu.toast(`Flusskette „${link.name}“ beigetreten.`);
         return riverTick();
@@ -930,6 +1067,9 @@ hud.setRiver(river ? river.name : null);
   newGame: (scenario: string, seed: number, free = false, species?: Species) => startGame(scenario, seed, free, species),
   getSpecies: () => currentSpecies,
   getRiver: () => ({ link: river, info: riverState, factor: riverFactorNow }),
+  getAchievements: () => ach,
+  checkAchievements: () => checkAchievements(true),
+  getSound: () => sound.debug(),
   riverTick: () => riverTick(),
   save: (slot: string) => send({ type: 'save', slot, name: saveName() }),
   load: (slot: string) => {
