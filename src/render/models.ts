@@ -31,6 +31,20 @@ const C = {
   brot: 0xb8793a,
   erde: 0x6b4a2f,
   rauch: 0xb0b0b0,
+  // Molchvolk: olivgrüne Haut, orangener Bauch, dunkle Flecken
+  molch: 0x5b6b3c,
+  molchBauch: 0xe59a3c,
+  molchKamm: 0x7a8a4a,
+  molchFleck: 0x2a2a22,
+  auge: 0x1a1a1a,
+  alge: 0x2e7d4f,
+  algeHell: 0x4fa36b,
+  moos: 0x6a8f3a,
+  hoehle: 0x2a2622,
+  kies: 0xb9ad8e,
+  steinHell: 0xb0b0aa,
+  schilf: 0x8fa84a,
+  laich: 0xd8e6ea,
 };
 
 function colored(geo: THREE.BufferGeometry, color: number): THREE.BufferGeometry {
@@ -132,6 +146,27 @@ export function otterGeometry(): THREE.BufferGeometry {
   ]);
 }
 
+/** Molch: flach und lang, mit Rückenkamm, Ruderschwanz und abgespreizten Beinen */
+export function molchGeometry(): THREE.BufferGeometry {
+  return merge([
+    box(0.22, 0.14, 0.46, C.molch, 0, 0.08, 0), // Rumpf
+    box(0.18, 0.05, 0.4, C.molchBauch, 0, 0.07, 0.02), // Bauch
+    box(0.04, 0.07, 0.3, C.molchKamm, 0, 0.22, -0.02), // Rückenkamm
+    box(0.2, 0.12, 0.2, C.molch, 0, 0.1, 0.3), // Kopf, breit und flach
+    box(0.14, 0.06, 0.08, C.molch, 0, 0.1, 0.42), // Schnauze
+    ball(0.035, C.auge, -0.08, 0.21, 0.32), // Augen
+    ball(0.035, C.auge, 0.08, 0.21, 0.32),
+    box(0.1, 0.08, 0.26, C.molch, 0, 0.08, -0.34), // Schwanz
+    box(0.05, 0.11, 0.22, C.molch, 0, 0.065, -0.56), // Ruderflosse
+    box(0.05, 0.05, 0.05, C.molchFleck, -0.06, 0.22, 0.08), // Flecken
+    box(0.05, 0.05, 0.05, C.molchFleck, 0.07, 0.22, -0.1),
+    box(0.14, 0.06, 0.07, C.molch, -0.14, 0.02, 0.18, 0.5), // Beine, seitlich abgespreizt
+    box(0.14, 0.06, 0.07, C.molch, 0.14, 0.02, 0.18, -0.5),
+    box(0.14, 0.06, 0.07, C.molch, -0.14, 0.02, -0.14, -0.5),
+    box(0.14, 0.06, 0.07, C.molch, 0.14, 0.02, -0.14, 0.5),
+  ]);
+}
+
 export function treeGeometry(): THREE.BufferGeometry {
   return merge([
     cylinder(0.09, 0.55, C.holzDunkel, 0, 0, 0, 6, 0.07),
@@ -195,6 +230,10 @@ export function carryGeometry(code: number): THREE.BufferGeometry {
       return merge([ball(0.09, C.brot, 0, 0.36, 0.05, 0), ball(0.09, C.brot, 0, 0.36, -0.08, 0)]);
     case GOOD_CODE.werkzeug:
       return merge([box(0.22, 0.1, 0.14, C.holzDunkel, 0, 0.3, 0), box(0.12, 0.03, 0.03, C.eisen, 0, 0.42, 0), box(0.03, 0.06, 0.03, C.eisen, -0.05, 0.4, 0), box(0.03, 0.06, 0.03, C.eisen, 0.05, 0.4, 0)]);
+    case GOOD_CODE.stein:
+      return merge([box(0.2, 0.14, 0.16, C.stein, 0, 0.3, 0, 0.3), box(0.12, 0.1, 0.1, C.steinHell, 0.04, 0.44, 0.02, -0.4)]);
+    case GOOD_CODE.algen:
+      return merge([box(0.18, 0.12, 0.3, C.alge, 0, 0.3, 0), box(0.1, 0.08, 0.2, C.algeHell, 0.02, 0.42, 0.02, 0.3)]);
     default:
       return logGeometry();
   }
@@ -700,6 +739,96 @@ export function buildingGeometry(id: BuildingId): THREE.BufferGeometry {
       // Poller und ein Seilring
       parts.push(cylinder(0.05, 0.22, C.holzDunkel, 0.36, 0.36, 0.36, 6));
       parts.push(cylinder(0.09, 0.04, C.stroh, -0.3, 0.36, 0.3, 8));
+      return merge(parts);
+    }
+    case 'molchlager': {
+      // Steinlager: flache Plattform, die auch im Flachwasser steht, mit Steinstapeln, Algenhaufen und Moosdach
+      const parts: THREE.BufferGeometry[] = [box(1.8, 0.3, 1.8, C.steinDunkel), box(1.7, 0.06, 1.7, C.stein, 0, 0.3, 0)];
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) parts.push(box(0.14, 0.9, 0.14, C.stein, sx * 0.8, 0.3, sz * 0.8));
+      parts.push(box(1.9, 0.1, 1.9, C.steinDunkel, 0, 1.2, 0));
+      parts.push(cone(1.32, 0.3, C.moos, 0, 1.3, 0, 4, Math.PI / 4));
+      parts.push(box(0.4, 0.34, 0.4, C.stein, -0.45, 0.36, -0.4));
+      parts.push(box(0.4, 0.34, 0.4, C.steinHell, 0.1, 0.36, -0.45));
+      parts.push(box(0.34, 0.3, 0.34, C.steinHell, -0.2, 0.7, -0.42));
+      parts.push(box(0.5, 0.2, 0.4, C.alge, 0.4, 0.36, 0.35));
+      return merge(parts);
+    }
+    case 'molchhoehle':
+      // Steinkuppel mit dunklem Eingang; die Stange mit Algenwimpel ragt aus dem Wasser, wenn die Höhle nass steht
+      // (die Kuppel reicht bis knapp über die tiefste erlaubte Stelle, WET_DEPTH)
+      return merge([
+        box(0.84, 0.3, 0.84, C.steinDunkel, 0, 0, 0),
+        ball(0.46, C.stein, 0, 0.52, 0, 1),
+        box(0.5, 0.34, 0.06, C.steinDunkel, 0, 0.3, 0.4),
+        box(0.24, 0.3, 0.1, C.hoehle, 0, 0.3, 0.4),
+        ball(0.16, C.moos, -0.22, 0.84, -0.16),
+        cylinder(0.03, 1.5, C.holzDunkel, 0.3, 0.3, -0.3, 5),
+        box(0.22, 0.12, 0.02, C.alge, 0.41, 1.64, -0.3),
+      ]);
+    case 'grotte': {
+      // große Steingrotte aus mehreren Kuppeln mit zwei Eingängen
+      const parts: THREE.BufferGeometry[] = [box(1.8, 0.24, 1.8, C.steinDunkel, 0, 0, 0)];
+      parts.push(ball(0.85, C.stein, 0, 0.5, 0, 1));
+      parts.push(ball(0.5, C.stein, -0.6, 0.4, 0.5, 1));
+      parts.push(ball(0.45, C.steinDunkel, 0.65, 0.35, -0.45, 1));
+      parts.push(box(0.36, 0.34, 0.12, C.hoehle, 0, 0.24, 0.82));
+      parts.push(box(0.26, 0.28, 0.12, C.hoehle, -0.62, 0.24, 0.98));
+      parts.push(ball(0.22, C.moos, 0.3, 1.2, 0.2));
+      parts.push(ball(0.16, C.moos, -0.4, 1.0, -0.3));
+      parts.push(cylinder(0.04, 1.7, C.holzDunkel, 0.8, 0.24, 0.8, 5));
+      parts.push(box(0.3, 0.16, 0.02, C.alge, 0.95, 1.78, 0.8));
+      return merge(parts);
+    }
+    case 'steinbruch':
+      // Felsbrocken, Bruchstücke und ein Gestell mit Schlägel
+      return merge([
+        box(0.84, 0.08, 0.84, C.erde, 0, 0, 0),
+        box(0.5, 0.4, 0.4, C.stein, -0.15, 0.08, -0.15, 0.3),
+        box(0.3, 0.26, 0.3, C.steinDunkel, 0.25, 0.08, 0.2, -0.4),
+        box(0.2, 0.18, 0.2, C.steinHell, -0.25, 0.48, -0.1, 0.2),
+        box(0.18, 0.14, 0.18, C.steinHell, 0.1, 0.08, -0.35),
+        box(0.06, 0.6, 0.06, C.holzDunkel, 0.32, 0.08, -0.3),
+        box(0.06, 0.6, 0.06, C.holzDunkel, 0.32, 0.08, 0.3),
+        box(0.06, 0.06, 0.66, C.holz, 0.32, 0.66, 0),
+        box(0.04, 0.3, 0.04, C.holzHell, 0.38, 0.36, 0.1, 0.4),
+        box(0.14, 0.06, 0.06, C.eisen, 0.38, 0.66, 0.1, 0.4),
+      ]);
+    case 'kiesbecken': {
+      // Steinwanne mit Kies, durch die das Wasser rinnt
+      const parts: THREE.BufferGeometry[] = [box(0.9, 0.12, 0.9, C.steinDunkel, 0, 0, 0)];
+      for (const sx of [-1, 1]) parts.push(box(0.1, 0.34, 0.9, C.stein, sx * 0.4, 0.12, 0));
+      for (const sz of [-1, 1]) parts.push(box(0.9, 0.34, 0.1, C.stein, 0, 0.12, sz * 0.4));
+      parts.push(box(0.7, 0.2, 0.7, C.kies, 0, 0.12, 0));
+      parts.push(box(0.66, 0.04, 0.66, C.wasser, 0, 0.34, 0));
+      for (let k = 0; k < 6; k++) parts.push(ball(0.05, k % 2 ? C.steinHell : C.stein, ((k % 3) - 1) * 0.2, 0.38, k < 3 ? -0.15 : 0.15));
+      parts.push(box(0.2, 0.08, 0.3, C.steinDunkel, 0, 0.3, 0.5));
+      return merge(parts);
+    }
+    case 'algenfarm': {
+      // Leinen zwischen Pfählen im Wasser, an denen Algen wachsen, mit kleiner Plattform
+      const parts: THREE.BufferGeometry[] = [];
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) parts.push(cylinder(0.05, 1.0, C.holzDunkel, sx * 0.8, 0, sz * 0.8, 6));
+      for (const z of [-0.8, -0.27, 0.27, 0.8]) {
+        parts.push(box(1.7, 0.03, 0.03, C.holzHell, 0, 0.9, z));
+        for (let k = 0; k < 5; k++) parts.push(box(0.08, 0.5, 0.12, k % 2 ? C.alge : C.algeHell, -0.6 + k * 0.3, 0.42, z));
+      }
+      for (const x of [-0.8, 0.8]) parts.push(box(0.03, 0.03, 1.7, C.holzHell, x, 0.9, 0));
+      parts.push(box(0.4, 0.06, 0.4, C.holz, 0.6, 0.9, 0.6));
+      parts.push(box(0.3, 0.16, 0.3, C.alge, 0.6, 0.96, 0.6));
+      return merge(parts);
+    }
+    case 'laichplatz': {
+      // Schilfring im Wasser mit Laichballen zwischen den Halmen
+      const parts: THREE.BufferGeometry[] = [box(0.8, 0.06, 0.8, C.kies, 0, 0, 0)];
+      for (let k = 0; k < 8; k++) {
+        const a = (k / 8) * Math.PI * 2;
+        parts.push(cylinder(0.025, 0.9 + (k % 3) * 0.15, C.schilf, Math.cos(a) * 0.36, 0.04, Math.sin(a) * 0.36, 4));
+      }
+      parts.push(ball(0.1, C.laich, 0.1, 0.2, 0.05, 1));
+      parts.push(ball(0.08, C.laich, -0.12, 0.16, -0.08, 1));
+      parts.push(ball(0.07, C.laich, 0.02, 0.14, -0.16, 1));
+      parts.push(cylinder(0.03, 1.1, C.holzDunkel, 0.3, 0.04, -0.3, 5));
+      parts.push(box(0.2, 0.1, 0.02, C.alge, 0.4, 1.12, -0.3));
       return merge(parts);
     }
     case 'steg': {

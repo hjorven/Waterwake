@@ -45,6 +45,8 @@ export interface SeasonProfile {
   duerre: { min: number; max: number; growMin: number; growMax: number; capMin: number; capMax: number };
   /** Flutwelle der Schmelze: Spitze über dem Grundwert 3 in Jahr 1, Zuwachs je Jahr, Obergrenze */
   melt: { peak: number; grow: number; cap: number };
+  /** ab diesem Jahr kommt die Schlammflut, Vorgabe MUD_YEAR */
+  mudYear?: number;
 }
 
 export const DEFAULT_SEASONS: SeasonProfile = {
@@ -90,7 +92,7 @@ export class Seasons {
   /** Nächste Phase bestimmen; die Schlammflut wird vor Jahr 3 übersprungen */
   private pickNext(): void {
     let slot = (this.slot + 1) % Seasons.ORDER.length;
-    if (Seasons.ORDER[slot] === 'schlamm' && this.year < MUD_YEAR) slot = (slot + 1) % Seasons.ORDER.length;
+    if (Seasons.ORDER[slot] === 'schlamm' && this.year < (this.profile.mudYear ?? MUD_YEAR)) slot = (slot + 1) % Seasons.ORDER.length;
     this.nextSlot = slot;
     this.next = Seasons.ORDER[slot];
     this.nextLength = this.lengthFor(this.next);

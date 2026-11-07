@@ -1,9 +1,10 @@
-import { BUILDINGS, BUILDING_ORDER, CATEGORY_LABEL, DAM_WOOD_PER_LEVEL, DRINK_SPOTS, GATE_WOOD, type BuildingCategory, type BuildingId } from '../data/buildings';
-import { costText, FOODS, GOOD_LABEL, GOODS } from '../data/goods';
+import { BUILDINGS, CATEGORY_LABEL, DAM_WOOD_PER_LEVEL, DRINK_SPOTS, GATE_WOOD, type BuildingCategory, type BuildingId } from '../data/buildings';
+import { costText, FOODS, GOOD_LABEL, GOODS, type Good } from '../data/goods';
 import { EDITOR_SOURCE_RATE } from '../data/custom';
 import { DAILY_ID, dailyScore } from '../data/daily';
 import { goalText } from '../data/maps';
-import { TECH_FOR, TECH_ORDER, TECHS, type TechId } from '../data/tech';
+import { costFor, SPECIES, type Species, type SpeciesDef } from '../data/species';
+import { TECH_ORDER, TECHS, requiredFor, techTable, type TechId } from '../data/tech';
 import type { BuildingSnap, SimStats } from '../sim/protocol';
 import { MAX_DAM, MAX_DIKE, WEATHER_INFO, type Tool, type Weather } from '../sim/world';
 
@@ -73,6 +74,16 @@ export const ICONS: Record<string, string> = {
   mood: '<circle cx="12" cy="12" r="9"/><circle cx="9" cy="10" r="1" fill="currentColor"/><circle cx="15" cy="10" r="1" fill="currentColor"/><path d="M8 14c1.5 2 6.5 2 8 0"/>',
   moodBad: '<circle cx="12" cy="12" r="9"/><circle cx="9" cy="10" r="1" fill="currentColor"/><circle cx="15" cy="10" r="1" fill="currentColor"/><path d="M8 16c1.5-2 6.5-2 8 0"/>',
   holz: '<rect x="3" y="9" width="18" height="6" rx="3"/><circle cx="6" cy="12" r="1.5"/>',
+  stein: '<path d="M4 17l3-8h9l4 8z"/><path d="M7 9l4 8M16 9l-3 8"/>',
+  algen: '<path d="M6 21c0-6 2-9 2-15"/><path d="M12 21c0-5 2-8 2-13"/><path d="M18 21c0-6-2-9-2-14"/>',
+  molch: '<path d="M3 16c3 0 4-5 8-5s5 5 8 5"/><circle cx="18" cy="9" r="3"/><path d="M6 15l-2 3M9 13l-1 3M13 13l1 3M16 15l2 3"/>',
+  molchlager: '<path d="M3 20h18"/><path d="M5 20v-8h14v8"/><path d="M8 12V8h8v4"/><path d="M5 16h14"/>',
+  molchhoehle: '<path d="M3 20h18"/><path d="M4 20a8 8 0 0 1 16 0"/><path d="M9 20a3 3 0 0 1 6 0"/>',
+  grotte: '<path d="M2 20h20"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M11 20a5 5 0 0 1 10 0"/><path d="M7 20a2 2 0 0 1 4 0"/>',
+  steinbruch: '<path d="M3 20h18"/><path d="M5 20l3-7 4 3 3-6 4 10"/><path d="M15 4l4 4M19 4l-4 4"/>',
+  kiesbecken: '<rect x="4" y="8" width="16" height="12" rx="2"/><path d="M4 13h16"/><circle cx="8" cy="17" r="1" fill="currentColor"/><circle cx="12" cy="17" r="1" fill="currentColor"/><circle cx="16" cy="17" r="1" fill="currentColor"/><path d="M12 4v4"/>',
+  algenfarm: '<path d="M4 20V8M20 20V8"/><path d="M4 10h16M4 15h16"/><path d="M8 10v4M12 10v4M16 10v4M8 15v4M12 15v4M16 15v4"/>',
+  laichplatz: '<path d="M3 20c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/><path d="M7 16V7M12 16V5M17 16V8"/><circle cx="9.5" cy="13" r="1.5"/><circle cx="14.5" cy="12" r="1.5"/>',
   beeren: '<circle cx="9" cy="14" r="3"/><circle cx="15" cy="14" r="3"/><circle cx="12" cy="9" r="3"/><path d="M12 6V3"/>',
   wasser: '<path d="M12 3s6 7 6 11a6 6 0 0 1-12 0c0-4 6-11 6-11z"/>',
   normal: '<circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/>',
@@ -203,8 +214,10 @@ const EDITOR_ITEMS: Item[] = [
   ...LAND_ITEMS.filter((it) => it.key === 'select'),
 ];
 
-function buildItems(category: BuildingCategory): Item[] {
-  return BUILDING_ORDER.filter((id) => BUILDINGS[id].category === category).map((id) => {
+/** Bauliste eines Reiters für das Volk: nur seine Gebäude, Kosten in seinem Baustoff */
+function buildItems(category: BuildingCategory, sp: SpeciesDef): Item[] {
+  const techFor = techTable(sp.techs);
+  return sp.buildings.filter((id) => BUILDINGS[id].category === category).map((id) => {
     const d = BUILDINGS[id];
     const extra: string[] = [];
     if (d.workers) extra.push(`${d.workers} Arbeiter`);
@@ -217,22 +230,23 @@ function buildItems(category: BuildingCategory): Item[] {
     if (d.recipe) extra.push(`${d.recipe.inAmount} ${GOOD_LABEL[d.recipe.input]} zu ${d.recipe.outAmount} ${GOOD_LABEL[d.recipe.output]}`);
     if (d.harvest) extra.push(`${d.harvest.amount} ${GOOD_LABEL[d.harvest.good]} alle ${d.harvest.days} Tage`);
     if (d.knowledge) extra.push(`${fmt(d.knowledge)} Wissen je Schicht`);
-    const tech = TECH_FOR[id];
+    const tech = techFor[id];
     return {
       key: id,
       label: d.name,
       icon: id,
-      cost: costText(d.cost),
+      cost: costText(costFor(d.cost, sp.material)),
       desc: `${d.desc} ${extra.join(', ')}.${tech ? ` Forschung: ${TECHS[tech].name}.` : ''}`,
       mode: { kind: 'build', id },
     };
   });
 }
 
-function researchItems(): Item[] {
-  return TECH_ORDER.map((t) => {
+function researchItems(sp: SpeciesDef): Item[] {
+  return TECH_ORDER.filter((t) => sp.techs.includes(t)).map((t) => {
     const d = TECHS[t];
-    const req = d.requires ? ` Braucht ${TECHS[d.requires].name}.` : '';
+    const need = requiredFor(t, sp.techs);
+    const req = need ? ` Braucht ${TECHS[need].name}.` : '';
     return {
       key: `tech:${t}`,
       label: d.name,
@@ -243,6 +257,12 @@ function researchItems(): Item[] {
       tech: t,
     };
   });
+}
+
+/** Wasserbau-Werkzeuge mit Kosten im Baustoff des Volkes (Holz oder Stein) */
+function waterItems(material: Good): Item[] {
+  if (material === 'holz') return WATER_ITEMS;
+  return WATER_ITEMS.map((it) => ({ ...it, cost: it.key === 'abreissen' ? `halber ${GOOD_LABEL[material]} zurück` : it.cost.replace('Holz', GOOD_LABEL[material]) }));
 }
 
 const WEATHER_ICON: Record<Weather, string> = { normal: 'normal', schmelze: 'schmelze', duerre: 'duerre', schlamm: 'schlamm' };
@@ -293,6 +313,9 @@ export class Hud {
   private lastStatsKey = '';
   private lastCardsKey = '';
   private editor = false;
+  /** Volk des laufenden Spiels: bestimmt Baumenü, Forschung, Baustoff und Wortwahl */
+  private species: SpeciesDef = SPECIES.otter;
+  private techFor = techTable(SPECIES.otter.techs);
 
   constructor(parent: HTMLElement, cb: HudCallbacks) {
     this.cb = cb;
@@ -408,6 +431,16 @@ export class Hud {
     this.showTab(on ? 'editor' : 'siedlung');
   }
 
+  /** Volk wechseln: Baumenü, Forschung und Leiste folgen */
+  setSpecies(id: Species): void {
+    if (this.species.id === id) return;
+    this.species = SPECIES[id];
+    this.techFor = techTable(this.species.techs);
+    this.lastCardsKey = '';
+    this.lastStatsKey = '';
+    if (!this.editor) this.showTab('siedlung');
+  }
+
   /** Alles ausblenden oder zeigen (Startmenü) */
   setVisible(v: boolean): void {
     this.root.classList.toggle('hidden', !v);
@@ -425,7 +458,7 @@ export class Hud {
 
   private showTab(tab: Tab): void {
     for (const b of this.tabs.children) (b as HTMLElement).classList.toggle('active', (b as HTMLElement).dataset.tab === tab);
-    const list = tab === 'editor' ? EDITOR_ITEMS : tab === 'wasserbau' ? WATER_ITEMS : tab === 'gelaende' ? LAND_ITEMS : tab === 'forschung' ? researchItems() : buildItems(tab);
+    const list = tab === 'editor' ? EDITOR_ITEMS : tab === 'wasserbau' ? waterItems(this.species.material) : tab === 'gelaende' ? LAND_ITEMS : tab === 'forschung' ? researchItems(this.species) : buildItems(tab, this.species);
     this.items.innerHTML = '';
     this.cards.clear();
     for (const it of list) {
@@ -439,7 +472,7 @@ export class Hud {
           this.clickTech(it.tech);
           return;
         }
-        const tech = it.mode.kind === 'build' ? TECH_FOR[it.mode.id] : undefined;
+        const tech = it.mode.kind === 'build' ? this.techFor[it.mode.id] : undefined;
         if (tech && !this.researched(tech)) {
           this.setHint(`${it.label} braucht die Forschung ${TECHS[tech].name}. Siehe Reiter Forschung.`, true);
           return;
@@ -498,22 +531,24 @@ export class Hud {
       if (k.startsWith('tech:')) {
         const d = TECHS[k.slice(5) as TechId];
         const done = this.researched(d.id);
-        const blocked = !!d.requires && !this.researched(d.requires);
+        const need = requiredFor(d.id, this.species.techs);
+        const blocked = !!need && !this.researched(need);
         card.classList.toggle('done', done);
         card.classList.toggle('locked', !done && blocked);
         card.classList.toggle('poor', !done && !blocked && (s?.knowledge ?? 0) < d.cost);
-        card.querySelector('.card-cost')!.textContent = done ? 'erforscht' : blocked ? `braucht ${TECHS[d.requires!].name}` : `${d.cost} Wissen`;
+        card.querySelector('.card-cost')!.textContent = done ? 'erforscht' : blocked ? `braucht ${TECHS[need!].name}` : `${d.cost} Wissen`;
         continue;
       }
       const def = BUILDINGS[k as BuildingId];
       if (!def) continue;
-      const tech = TECH_FOR[def.id];
+      const tech = this.techFor[def.id];
       const locked = !!tech && !this.researched(tech);
       card.classList.toggle('locked', locked);
+      const cost = costFor(def.cost, this.species.material);
       let poor = false;
-      for (const g of GOODS) if ((def.cost[g] ?? 0) > (s?.goods[g] ?? (g === 'holz' ? this.wood : 0))) poor = true;
+      for (const g of GOODS) if ((cost[g] ?? 0) > (s?.goods[g] ?? (g === 'holz' ? this.wood : 0))) poor = true;
       card.classList.toggle('poor', !locked && poor);
-      card.querySelector('.card-cost')!.textContent = locked ? `Forschung: ${TECHS[tech].name}` : costText(def.cost);
+      card.querySelector('.card-cost')!.textContent = locked ? `Forschung: ${TECHS[tech].name}` : costText(cost);
     }
   }
 
@@ -572,7 +607,7 @@ export class Hud {
     // Die Leiste nur neu bauen, wenn sich sichtbare Werte geändert haben
     const key = [
       info.day, info.year, s.weather, info.daysLeft, info.next, info.nextMin, info.nextMax,
-      s.population, s.children, s.sick, s.housing, Math.floor(s.wood), s.storageCap, Math.floor(s.food), Math.floor(s.water), s.waterCap,
+      s.population, s.children, s.sick, s.housing, Math.floor(s.goods[this.species.material]), s.storageCap, Math.floor(s.food), Math.floor(s.water), s.waterCap,
       Math.round(s.mood * 20), s.outcome, s.scenario, pollutionLabel(s.waterPollution), s.hasPower, fmt(s.power.supply), fmt(s.power.demand),
       Math.floor(s.goods.bretter), Math.floor(s.knowledge), s.hasKnowledge, s.toolBonus, s.techs.length, s.deepCells, Math.floor(s.goalDays),
       s.editor, s.sources, s.sinks, s.startSet,
@@ -604,14 +639,14 @@ export class Hud {
     if (s.goal) {
       const done = s.outcome === 'won';
       const popOk = s.population >= s.goal.population;
-      const parts = [`<span class="${popOk ? 'ok' : ''}">${s.population}/${s.goal.population} Otter</span>`];
+      const parts = [`<span class="${popOk ? 'ok' : ''}">${s.population}/${s.goal.population} ${this.species.many}</span>`];
       if (s.goal.kind === 'clan') {
         parts.push(`<span class="${info.year >= s.goal.year ? 'ok' : ''}">Jahr ${info.year}/${s.goal.year}</span>`);
       } else {
         parts.unshift(`<span class="${s.deepCells >= s.goal.cells ? 'ok' : ''}">See ${s.deepCells}/${s.goal.cells}</span>`, `<span class="${s.goalDays >= s.goal.days ? 'ok' : ''}">${Math.floor(s.goalDays)}/${s.goal.days} Tage</span>`);
       }
       this.goal.innerHTML = `${icon(done ? 'trophy' : 'ziel')}<div class="goal-text"><b>${done ? 'Ziel erreicht' : 'Ziel'}</b><small>${parts.join(' · ')}</small></div>`;
-      this.goal.title = `${s.scenarioName}: ${goalText(s.goal)}`;
+      this.goal.title = `${s.scenarioName}: ${goalText(s.goal, s.species)}`;
     } else if (s.scenario === DAILY_ID) {
       this.goal.innerHTML = `${icon('trophy')}<div class="goal-text"><b>Tageskarte</b><small>${dailyScore(info.day - 1, s.population)} Punkte · Tag ${info.day}</small></div>`;
       this.goal.title = `${s.scenarioName}: 10 Punkte je überstandenem Tag, 5 je Otter`;
@@ -626,24 +661,27 @@ export class Hud {
     const moodCls = s.mood < 0.4 ? 'warn' : s.mood >= 0.75 ? 'good' : '';
     const dirty = s.waterPollution >= 0.3;
     const foodKinds = FOODS.filter((g) => s.goods[g] >= 1).map((g) => `${Math.floor(s.goods[g])} ${GOOD_LABEL[g]}`);
-    const showPlanks = s.goods.bretter >= 1 || s.techs.includes('zimmerei');
+    const sp = this.species;
+    const showPlanks = sp.techs.includes('zimmerei') && (s.goods.bretter >= 1 || s.techs.includes('zimmerei'));
+    const material = sp.material;
+    const stock = s.goods[material];
     this.res.innerHTML =
-      chip('otter', `Bewohner / Betten${s.children ? `, davon ${s.children} Junge` : ''}${s.sick ? `, ${s.sick} krank` : ''}`, `${s.population}<span>/${s.housing}</span>`, s.population > s.housing ? 'warn' : '') +
-      (s.sick ? chip('krank', 'Kranke Otter: schmutziges Wasser getrunken. Sauberes Wasser und eine Heilerhütte helfen.', `${s.sick}`, 'warn') : '') +
+      chip(sp.id, `Bewohner / Betten${s.children ? `, davon ${s.children} Junge` : ''}${s.sick ? `, ${s.sick} krank` : ''}`, `${s.population}<span>/${s.housing}</span>`, s.population > s.housing ? 'warn' : '') +
+      (s.sick ? chip('krank', `Kranke ${sp.many}: schmutziges Wasser getrunken. Sauberes Wasser und eine Heilerhütte helfen.`, `${s.sick}`, 'warn') : '') +
       chip(s.mood < 0.4 ? 'moodBad' : 'mood', `Zufriedenheit: ${moodLabel(s.mood)}. Hütten, Essen, Wasser, Abwechslung beim Essen und Freude-Gebäude machen zufrieden.`, `${Math.round(s.mood * 100)}<span>%</span>`, moodCls) +
-      chip('holz', `Holz im Lager / Platz${s.toolBonus ? '. Werkzeug für alle: der Clan arbeitet schneller' : ''}`, `${Math.floor(s.wood)}<span>/${s.storageCap}</span>`, s.wood < 5 ? 'warn' : '') +
+      chip(material, `${GOOD_LABEL[material]} im Lager / Platz${s.toolBonus ? '. Werkzeug für alle: der Clan arbeitet schneller' : ''}`, `${Math.floor(stock)}<span>/${s.storageCap}</span>`, stock < 5 ? 'warn' : '') +
       (showPlanks ? chip('bretter', 'Bretter im Lager / Platz. Das Sägewerk macht sie aus Holz.', `${Math.floor(s.goods.bretter)}<span>/${s.storageCap}</span>`, '') : '') +
       chip('nahrung', `Nahrung im Lager: ${foodKinds.length ? foodKinds.join(', ') : 'nichts'}. Mehrere Sorten machen zufrieden.`, `${Math.floor(s.food)}<span>/${s.storageCap}</span>`, s.food < s.population ? 'warn' : '') +
       chip('wasser', `Wasser im Speicher / Speicherplatz, ${pollutionLabel(s.waterPollution)}${dirty ? '. Ein Sandfilter reinigt es' : ''}`, `${Math.floor(s.water)}<span>/${s.waterCap}</span>`, dirty || (s.waterCap > 0 && s.water < s.population) ? 'warn' : '') +
       (s.hasPower ? chip('strom', `Strom: Erzeugung / Bedarf. ${s.power.ratio < 1 ? 'Es fehlt Strom, Maschinen laufen langsamer.' : 'Alle Maschinen laufen.'}`, `${fmt(s.power.supply)}<span>/${fmt(s.power.demand)}</span>`, s.power.ratio < 1 ? 'warn' : '') : '') +
-      (s.hasKnowledge ? chip('wissen', `Wissen für die Forschung, ${s.techs.length} von ${TECH_ORDER.length} Techniken erforscht. Reiter Forschung.`, `${Math.floor(s.knowledge)}`, '') : '');
+      (s.hasKnowledge ? chip('wissen', `Wissen für die Forschung, ${s.techs.filter((t) => sp.techs.includes(t)).length} von ${sp.techs.length} Techniken erforscht. Reiter Forschung.`, `${Math.floor(s.knowledge)}`, '') : '');
   }
 
   pushMessages(list: string[]): void {
     for (const text of list) {
       const el = document.createElement('div');
-      const bad = /verdurstet|verhungert|Dürre|Nicht genug|Kein |vertrocknet|aufgebraucht|Hochwasser|weggerissen|ertrunken|gestorben|ausgelöscht|krank|verschmutzt|Schlammflut|eingegangen|Holz ist alle|warten auf|Ohne Arbeiter|nicht genug Wissen|zuerst|sitzt fest/.test(text);
-      const good = /geboren|Ziel erreicht|fertig\.|wieder gesund|erforscht\./.test(text);
+      const bad = /verdurstet|verhungert|Dürre|Nicht genug|Kein |vertrocknet|aufgebraucht|Hochwasser|weggerissen|ertrunken|gestorben|ausgelöscht|krank|verschmutzt|Schlammflut|eingegangen|Holz ist alle|Stein ist alle|warten auf|Ohne Arbeiter|nicht genug Wissen|zuerst|sitzt fest/.test(text);
+      const good = /geboren|geschlüpft|Ziel erreicht|fertig\.|wieder gesund|erforscht\./.test(text);
       el.className = `msg${bad ? ' bad' : good ? ' good' : ''}`;
       el.textContent = text;
       this.messages.appendChild(el);

@@ -1,6 +1,7 @@
 import type { SeasonProfile } from '../sim/seasons';
 import type { ValleyParams } from '../sim/terrain';
 import type { CustomMap } from './custom';
+import { SPECIES, type Species } from './species';
 import { DAILY_ID, dailyKey, dailyScenario, isDayKey } from './daily';
 
 /** Spielziel einer Karte. Freies Spiel hat keins. */
@@ -41,6 +42,8 @@ export interface Scenario {
   hint?: string;
   /** eigene oder geteilte Karte: das Gelände kommt aus dieser Karte statt aus dem Generator */
   custom?: CustomMap;
+  /** Volk, Vorgabe Otter */
+  species?: Species;
 }
 
 export const OTTERTAL: Scenario = {
@@ -144,7 +147,95 @@ export const GROSSER_CLAN: Scenario = {
 /** Die Otter-Kampagne in Spielreihenfolge; jede Karte wird nach dem Sieg auf der vorigen frei */
 export const CAMPAIGN: Scenario[] = [OTTERTAL, SCHLUCHT, DUERRELAND, DELTA, GROSSER_CLAN];
 
-export const SCENARIOS: Record<string, Scenario> = Object.fromEntries(CAMPAIGN.map((s) => [s.id, s]));
+// --- Molchvolk -------------------------------------------------------------------
+
+export const LAGUNE: Scenario = {
+  id: 'lagune',
+  name: 'Die Lagune',
+  species: 'molch',
+  seed: 101,
+  w: 96,
+  h: 96,
+  intro: [
+    'Flussabwärts der Otter weitet sich das Wasser zu einer Lagune mit Tümpeln und flachen Ufern. Hier zieht das Molchvolk ein, dem das Wasser lieber ist als das Land.',
+    'Molche bauen mit Stein statt Holz. Ihre Höhlen stehen im Fluss, das Hochwasser kann ihnen nichts anhaben, und Algenfarmen wachsen nur unter Wasser.',
+    'Dafür ist die Dürre ihr Feind: Trocknet der Fluss aus, verdursten sie doppelt so schnell und ihre Höhlen liegen auf dem Trockenen. Bringt das Volk auf vierzehn Molche und ins zweite Jahr.',
+  ],
+  goal: { kind: 'clan', population: 14, year: 2 },
+  terrain: { gorge: 0.3, gorgeAt: 0.4, bedTop: 6, drop: 3, halfBed: 3.2, slope: 0.3, hills: 8, hillNoise: 5, pools: true, meander: [0.14, 0.08] },
+  seasons: {
+    normal: [9, 13],
+    schmelze: [2, 3],
+    schlamm: [2, 3],
+    duerre: { min: 3, max: 5, growMin: 1, growMax: 1, capMin: 6, capMax: 8 },
+    melt: { peak: 2.5, grow: 1, cap: 5 },
+  },
+  minutes: 40,
+  hint: 'Höhlen ins flache Wasser, die Algenfarm in den Fluss, den Steinbruch an einen Hang. Pumpe und Tank für die Dürre.',
+};
+
+export const SCHLAMMTAL: Scenario = {
+  id: 'schlammtal',
+  name: 'Das Schlammtal',
+  species: 'molch',
+  seed: 113,
+  w: 96,
+  h: 96,
+  intro: [
+    'Ein enges Tal mit lehmigen Hängen. Jede Schneeschmelze reißt hier Erde mit, und schon im ersten Jahr folgt ihr eine Schlammflut.',
+    'Für Molche ist schmutziges Wasser fast tödlich: Wer es trinkt, wird schwer krank. Sauberes Wasser aus Tank und Kiesbecken ist alles, was zählt.',
+    'Sammelt vor der Flut sauberes Wasser, reinigt es im Kiesbecken, und bringt das Volk auf zwanzig Molche im dritten Jahr.',
+  ],
+  goal: { kind: 'clan', population: 20, year: 3 },
+  terrain: { gorge: 0.8, gorgeAt: 0.55, bedTop: 7, drop: 5, halfBed: 2.2, slope: 0.5, hills: 9, hillNoise: 6, meander: [0.12, 0.06] },
+  seasons: {
+    normal: [8, 12],
+    schmelze: [2, 3],
+    schlamm: [3, 5],
+    duerre: { min: 4, max: 6, growMin: 1, growMax: 1, capMin: 8, capMax: 10 },
+    melt: { peak: 2.5, grow: 1, cap: 5 },
+    mudYear: 1,
+  },
+  minutes: 55,
+  hint: 'Tank und Kiesbecken vor der ersten Schlammflut, Heiler mit Kräutergarten dazu. In der Flut nur aus dem Speicher trinken.',
+};
+
+export const HOCHLAND: Scenario = {
+  id: 'hochland',
+  name: 'Das trockene Hochland',
+  species: 'molch',
+  seed: 127,
+  w: 96,
+  h: 96,
+  intro: [
+    'Hoch oben versiegt der Fluss jeden Sommer für Wochen. Die Alten der Molche erzählen von einem See, der hier einmal das ganze Tal füllte.',
+    'Wasser halten ist alles: Dämme aus Stein stauen den Fluss, und wo das Wasser steht, bleiben Höhlen nass und Algen wachsen.',
+    'Staut einen See von vierzig Zellen mit anderthalb Tiefe und haltet ihn drei Tage lang durch Normalzeit oder Dürre, mit sechzehn Molchen an seinem Ufer.',
+  ],
+  goal: { kind: 'stausee', cells: 40, depth: 1.5, days: 3, population: 16 },
+  terrain: { gorge: 1.4, gorgeAt: 0.5, bedTop: 8, drop: 6, halfBed: 1.8, slope: 0.5, hills: 10, hillNoise: 6, sourceRate: 1.1, meander: [0.1, 0.05] },
+  seasons: {
+    normal: [8, 12],
+    schmelze: [2, 3],
+    schlamm: [2, 4],
+    duerre: { min: 10, max: 14, growMin: 1, growMax: 2, capMin: 16, capMax: 20 },
+    melt: { peak: 2, grow: 1, cap: 4 },
+  },
+  minutes: 60,
+  hint: 'Dämme (Reiter Wasserbau) kosten Stein: früh einen Steinbruch bauen. Der See zählt nur in Normalzeit und Dürre.',
+};
+
+/** Die Molch-Kampagne; die erste Karte wird nach dem Sieg im Ottertal frei */
+export const MOLCH_CAMPAIGN: Scenario[] = [LAGUNE, SCHLAMMTAL, HOCHLAND];
+
+export const CAMPAIGNS: Scenario[][] = [CAMPAIGN, MOLCH_CAMPAIGN];
+
+export const SCENARIOS: Record<string, Scenario> = Object.fromEntries([...CAMPAIGN, ...MOLCH_CAMPAIGN].map((s) => [s.id, s]));
+
+/** Volk einer Karte */
+export function speciesOf(s: Scenario): Species {
+  return s.species ?? 'otter';
+}
 
 /** Freies Spiel auf einer Zufallskarte mit Seed */
 export function freeScenario(seed: number, w = 96, h = 96): Scenario {
@@ -165,25 +256,44 @@ export function scenarioById(id: string, seed: number): Scenario {
   return SCENARIOS[id] ?? freeScenario(seed);
 }
 
-/** Nummer der Karte in der Kampagne (ab 0), -1 für andere Karten */
+/** Kampagne, zu der eine Karte gehört, null für andere Karten */
+export function campaignOf(id: string): Scenario[] | null {
+  return CAMPAIGNS.find((c) => c.some((s) => s.id === id)) ?? null;
+}
+
+/** Nummer der Karte in ihrer Kampagne (ab 0), -1 für andere Karten */
 export function campaignIndex(id: string): number {
-  return CAMPAIGN.findIndex((s) => s.id === id);
+  const c = campaignOf(id);
+  return c ? c.findIndex((s) => s.id === id) : -1;
 }
 
 /** Die Karte nach einer Kampagnenkarte, null nach der letzten oder außerhalb der Kampagne */
 export function nextScenario(id: string): Scenario | null {
+  const c = campaignOf(id);
   const i = campaignIndex(id);
-  return i >= 0 && i + 1 < CAMPAIGN.length ? CAMPAIGN[i + 1] : null;
+  return c && i >= 0 && i + 1 < c.length ? c[i + 1] : null;
 }
 
-/** Eine Kampagnenkarte ist spielbar, wenn sie die erste ist oder die vorige gewonnen wurde */
+/** Was vor einer Kampagnenkarte gewonnen sein muss, null wenn nichts */
+export function requiredWin(id: string): Scenario | null {
+  const c = campaignOf(id);
+  const i = campaignIndex(id);
+  if (!c || i < 0) return null;
+  if (i > 0) return c[i - 1];
+  // die Molch-Kampagne öffnet sich nach dem ersten Sieg der Otter
+  return c === MOLCH_CAMPAIGN ? OTTERTAL : null;
+}
+
+/** Eine Kampagnenkarte ist spielbar, wenn die Karte davor gewonnen wurde */
 export function isUnlocked(id: string, won: string[]): boolean {
-  const i = campaignIndex(id);
-  return i === 0 || (i > 0 && won.includes(CAMPAIGN[i - 1].id));
+  if (campaignIndex(id) < 0) return false;
+  const req = requiredWin(id);
+  return !req || won.includes(req.id);
 }
 
-export function goalText(goal: Goal | null): string {
+export function goalText(goal: Goal | null, species: Species = 'otter'): string {
+  const many = SPECIES[species].many;
   if (!goal) return 'Kein Ziel, freies Spiel';
-  if (goal.kind === 'clan') return `${goal.population} Otter und das Jahr ${goal.year} erreichen`;
-  return `einen See mit ${goal.cells} Zellen von ${goal.depth.toLocaleString('de-DE')} Tiefe ${goal.days} Tage halten, mit ${goal.population} Ottern`;
+  if (goal.kind === 'clan') return `${goal.population} ${many} und das Jahr ${goal.year} erreichen`;
+  return `einen See mit ${goal.cells} Zellen von ${goal.depth.toLocaleString('de-DE')} Tiefe ${goal.days} Tage halten, mit ${goal.population} ${species === 'otter' ? 'Ottern' : many}`;
 }

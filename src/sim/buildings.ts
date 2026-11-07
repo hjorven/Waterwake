@@ -1,5 +1,6 @@
-import { BUILDINGS, type BuildingDef, type BuildingId } from '../data/buildings';
+import { BUILDINGS, type BuildingDef, type BuildingId, WET_DEPTH } from '../data/buildings';
 import { costTotal, emptyStock, fillStock, FOODS, GOODS, type Good, type Stock } from '../data/goods';
+import { costFor } from '../data/species';
 
 export type { Good } from '../data/goods';
 
@@ -14,6 +15,8 @@ export interface Building {
   built: boolean;
   /** Baufortschritt 0..1 */
   progress: number;
+  /** Baukosten dieses Baus: Molche zahlen Stein statt Holz */
+  cost: Partial<Stock>;
   /** gelieferte Baustoffe je Ware */
   delivered: Stock;
   /** Baustoffe, die gerade unterwegs sind */
@@ -33,7 +36,7 @@ export interface Building {
 }
 
 /** Gebäude im Spielstand: ältere Versionen haben nur geliefertes Holz und weniger Waren */
-export type SavedBuilding = Omit<Building, 'delivered' | 'reserved' | 'growth' | 'stock' | 'damage' | 'flooded'> & {
+export type SavedBuilding = Omit<Building, 'delivered' | 'reserved' | 'growth' | 'stock' | 'damage' | 'flooded' | 'cost'> & {
   delivered?: Partial<Stock>;
   reserved?: Partial<Stock>;
   woodDelivered?: number;
@@ -63,6 +66,8 @@ export function canPlaceAt(id: BuildingId, x: number, y: number, w: number, h: n
       if (ctx.sink[i]) return 'zu nah am Kartenrand';
       if (def.onWater) {
         if (ctx.depth[i] < 0.15) return `${def.name} muss im Wasser stehen`;
+      } else if (def.wet) {
+        if (ctx.depth[i] > WET_DEPTH) return 'das Wasser ist hier zu tief';
       } else if (ctx.depth[i] > 0.05) return 'das Land ist überflutet';
       if (height < 0) height = ctx.ground[i];
       else if (ctx.ground[i] !== height) return 'der Boden muss eben sein';
@@ -133,6 +138,8 @@ export function canPlaceAt(id: BuildingId, x: number, y: number, w: number, h: n
 }
 
 export class Buildings {
+  /** Baustoff des Volkes: Holz bei Ottern, Stein bei Molchen; bestimmt die Kosten neuer Bauten */
+  material: Good = 'holz';
   readonly w: number;
   readonly h: number;
   readonly list: Building[] = [];
@@ -196,6 +203,7 @@ export class Buildings {
 
   place(id: BuildingId, x: number, y: number, prebuilt = false): Building {
     const def = BUILDINGS[id];
+    const cost = costFor(def.cost, this.material);
     const b: Building = {
       id: this.list.length,
       def: id,
@@ -205,7 +213,8 @@ export class Buildings {
       alive: true,
       built: prebuilt,
       progress: prebuilt ? 1 : 0,
-      delivered: prebuilt ? fillStock(def.cost) : emptyStock(),
+      cost,
+      delivered: prebuilt ? fillStock(cost) : emptyStock(),
       reserved: emptyStock(),
       growth: 0,
       workers: [],
@@ -230,6 +239,7 @@ export class Buildings {
       if (!src.delivered && src.woodDelivered) delivered.holz = src.woodDelivered;
       const b: Building = {
         ...src,
+        cost: costFor(BUILDINGS[src.def].cost, this.material),
         workers: [...src.workers],
         residents: [...src.residents],
         stock: fillStock(src.stock),
@@ -271,7 +281,7 @@ export class Buildings {
 
   /** Menge einer Ware, die eine Baustelle noch braucht (abzüglich Lieferungen unterwegs) */
   needed(b: Building, good: Good): number {
-    return Math.max(0, (this.def(b).cost[good] ?? 0) - b.delivered[good] - b.reserved[good]);
+    return Math.max(0, (b.cost[good] ?? 0) - b.delivered[good] - b.reserved[good]);
   }
 
   /** Waren, die eine Baustelle noch braucht */
@@ -281,17 +291,17 @@ export class Buildings {
 
   /** Alle Baustoffe sind da, es kann gebaut werden */
   fullyDelivered(b: Building): boolean {
-    const cost = this.def(b).cost;
+    const cost = b.cost;
     for (const g of GOODS) if (b.delivered[g] < (cost[g] ?? 0)) return false;
     return true;
   }
 
   /** Anteil der gelieferten Baustoffe 0..1 (für Baustellen-Darstellung) */
   deliveredShare(b: Building): number {
-    const total = costTotal(this.def(b).cost);
+    const total = costTotal(b.cost);
     if (total <= 0) return 1;
     let sum = 0;
-    for (const g of GOODS) sum += Math.min(b.delivered[g], this.def(b).cost[g] ?? 0);
+    for (const g of GOODS) sum += Math.min(b.delivered[g], b.cost[g] ?? 0);
     return sum / total;
   }
 

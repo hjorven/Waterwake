@@ -1,5 +1,6 @@
 import type { BuildingId } from '../data/buildings';
 import type { CustomMap, MapCore } from '../data/custom';
+import type { Species } from '../data/species';
 import type { Stock } from '../data/goods';
 import type { TechId } from '../data/tech';
 import type { SaveGame, SaveMeta } from './save';
@@ -7,7 +8,7 @@ import type { Tool, Weather, WorldStats } from './world';
 
 /** Nachrichten vom Hauptthread an den Simulations-Worker */
 export type ToWorker =
-  | { type: 'init'; scenario: string; seed: number; w: number; h: number; freeBuild?: boolean; unlockAll?: boolean; custom?: CustomMap; editor?: boolean }
+  | { type: 'init'; scenario: string; seed: number; w: number; h: number; freeBuild?: boolean; unlockAll?: boolean; custom?: CustomMap; editor?: boolean; species?: Species }
   /** Gelände, Quellen, Abfluss und Start der laufenden Karte holen (Editor) */
   | { type: 'exportMap' }
   | { type: 'load'; data: SaveGame }
@@ -73,7 +74,7 @@ export const RAFT_STRIDE = 7;
 
 /** Nachrichten vom Worker an den Hauptthread */
 export type FromWorker =
-  | { type: 'ready'; w: number; h: number; scenario: string; loaded: boolean; editor: boolean }
+  | { type: 'ready'; w: number; h: number; scenario: string; loaded: boolean; editor: boolean; species: Species }
   | {
       type: 'terrain';
       w: number;

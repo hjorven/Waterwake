@@ -1,13 +1,15 @@
 import { AUTHOR_MAX, MAP_NAME_MAX, isMapCode, newMapId, normalizeCode, validateGoal, type CustomMap, type MapCore, type SharedMapInfo } from '../data/custom';
 import { DAILY_ID, dailyDateText, dailyKey } from '../data/daily';
-import { CAMPAIGN, SCENARIOS, goalText, isUnlocked, nextScenario, type Goal, type Scenario } from '../data/maps';
+import { CAMPAIGN, CAMPAIGNS, MOLCH_CAMPAIGN, SCENARIOS, goalText, isUnlocked, nextScenario, requiredWin, speciesOf, type Goal, type Scenario } from '../data/maps';
+import { SPECIES, SPECIES_ORDER, type Species } from '../data/species';
 import { CLOUD_SLOTS, type DailyBoard, type DailyResult } from '../online/cloud';
 import { LOCAL_SLOTS, formatSavedAt, slotLabel, type SaveEntry, type Settings } from '../online/saves';
 import type { SimStats } from '../sim/protocol';
 import { icon } from './hud';
 
 export interface MenuCallbacks {
-  onNewGame(scenario: string, seed: number, freeBuild: boolean): void;
+  /** neues Spiel; ohne Volk gilt das der Karte (Kampagne) oder der Otterclan */
+  onNewGame(scenario: string, seed: number, freeBuild: boolean, species?: Species): void;
   onResume(): void;
   onMainMenu(): void;
   /** läuft gerade ein Spiel, das man speichern kann? */
@@ -68,7 +70,7 @@ export type MenuView = 'start' | 'menu' | 'campaign' | 'daily' | 'maps' | 'mapsa
 function metaText(e: SaveEntry | undefined): string {
   if (!e) return 'leer';
   const m = e.meta;
-  return `${m.scenarioName} · Tag ${m.day}, Jahr ${m.year} · ${m.population} Otter · ${formatSavedAt(m.savedAt)}`;
+  return `${m.scenarioName} · Tag ${m.day}, Jahr ${m.year} · ${m.population} Bewohner · ${formatSavedAt(m.savedAt)}`;
 }
 
 /** Fremde Texte (Spielernamen, Fehlermeldungen) sicher ins HTML setzen */
@@ -95,6 +97,8 @@ export class Menu {
   private cloudSaves: SaveEntry[] = [];
   private cloudBusy = false;
   private seed = Math.floor(Math.random() * 9000) + 100;
+  /** Volk fürs freie Spiel, bleibt beim Neuaufbau des Startbilds erhalten */
+  private volk: Species = 'otter';
   /** Stand beim letzten Ende-Dialog, für "Nochmal versuchen" */
   private lastStats: SimStats | null = null;
   /** Stand beim letzten Spielmenü, zum Neuaufbau nach dem Abgeben einer Wertung */
@@ -155,26 +159,28 @@ export class Menu {
     this.back = 'start';
     const auto = this.cb.listLocal().find((e) => e.slot === 'auto');
     const won = this.cb.campaignWon();
-    const next = CAMPAIGN.find((sc) => !won.includes(sc.id) && isUnlocked(sc.id, won));
-    const wonCount = CAMPAIGN.filter((sc) => won.includes(sc.id)).length;
+    const all = CAMPAIGNS.flat();
+    const next = all.find((sc) => !won.includes(sc.id) && isUnlocked(sc.id, won));
+    const wonCount = all.filter((sc) => won.includes(sc.id)).length;
     const campaignText = next
-      ? `${wonCount} von ${CAMPAIGN.length} Karten geschafft. Nächste Karte: ${next.name}, etwa ${next.minutes} Minuten.`
-      : `Alle ${CAMPAIGN.length} Karten geschafft. Jede Karte lässt sich nochmal spielen.`;
+      ? `${wonCount} von ${all.length} Karten geschafft. Nächste Karte: ${next.name}, etwa ${next.minutes} Minuten.`
+      : `Alle ${all.length} Karten geschafft. Jede Karte lässt sich nochmal spielen.`;
     this.dialog(
       '',
       `
-      <div class="start-title"><span class="logo">Waterwake</span><span class="tagline">Ein Otterclan am wilden Fluss</span></div>
+      <div class="start-title"><span class="logo">Waterwake</span><span class="tagline">Otter und Molche am wilden Fluss</span></div>
       <div class="start-cards">
-        <button class="start-card" data-act="campaign">${icon('trophy')}<b>Kampagne</b><small>${campaignText}</small></button>
+        <button class="start-card" data-act="campaign">${icon('trophy')}<b>Kampagnen</b><small>${campaignText}</small></button>
         <button class="start-card" data-act="daily">${icon('calendar')}<b>Tageskarte</b><small>Karte vom ${dailyDateText(dailyKey())}, für alle gleich. Wertung in der Bestenliste.</small></button>
         <button class="start-card" data-act="maps">${icon('editor')}<b>Karteneditor</b><small>Eigene Täler bauen, teilen und per Code spielen.</small></button>
         ${auto ? `<button class="start-card" data-act="continue">${icon('play')}<b>Weiterspielen</b><small>${metaText(auto)}</small></button>` : ''}
         <button class="start-card" data-act="saves">${icon('save')}<b>Spielstände</b><small>Laden aus dem Browser oder der Cloud.</small></button>
         <button class="start-card" data-act="settings">${icon('settings')}<b>Einstellungen</b><small>Miniatur-Unschärfe, Schatten.</small></button>
         <div class="start-card wide free">
-          ${icon('wasser')}<b>Freies Spiel</b><small>Zufallskarte ohne Ziel. Dieselbe Kartennummer ergibt dieselbe Karte.</small>
+          ${icon('wasser')}<b>Freies Spiel</b><small>Zufallskarte ohne Ziel, mit Ottern oder Molchen. Dieselbe Kartennummer ergibt dieselbe Karte.</small>
           <div class="free-row">
             <label>Karte <input class="seed" type="number" min="1" max="999999" value="${this.seed}"></label>
+            <label>Volk <select class="volk">${SPECIES_ORDER.map((id) => `<option value="${id}"${id === this.volk ? ' selected' : ''}>${SPECIES[id].name}</option>`).join('')}</select></label>
             <label><input class="freebuild" type="checkbox"> Baukasten: Wasserbau kostenlos</label>
             <button class="btn" data-act="free">Start</button>
           </div>
@@ -206,7 +212,7 @@ export class Menu {
     }
     const daily = stats && stats.scenario === DAILY_ID ? this.cb.dailyScore() : null;
     const head = stats
-      ? `<p class="note">${stats.scenarioName} · Tag ${stats.season.day}, Jahr ${stats.season.year} · ${stats.population} Otter · ${daily ? `Wertung: ${daily.score} Punkte` : `Ziel: ${goalText(stats.goal)}`}</p>`
+      ? `<p class="note">${stats.scenarioName} · Tag ${stats.season.day}, Jahr ${stats.season.year} · ${stats.population} ${SPECIES[stats.species].many} · ${daily ? `Wertung: ${daily.score} Punkte` : `Ziel: ${goalText(stats.goal, stats.species)}`}</p>`
       : '';
     const dailyPart = daily ? (daily.submitted ? `<p class="note">Die Wertung von ${daily.score} Punkten steht in der Bestenliste.</p>` : this.dailyRow(daily)) : '';
     this.dialog(
@@ -225,19 +231,23 @@ export class Menu {
     this.view = 'campaign';
     this.back = 'start';
     const won = this.cb.campaignWon();
-    const rows = CAMPAIGN.map((sc, i) => {
-      const done = won.includes(sc.id);
-      const open = isUnlocked(sc.id, won);
-      const state = done ? 'Geschafft' : open ? `Etwa ${sc.minutes} Minuten` : `Gesperrt: zuerst ${CAMPAIGN[i - 1].name} gewinnen`;
-      return `<div class="slot${open ? '' : ' locked'}">
-        <div class="slot-info"><b>${i + 1}. ${sc.name}${done ? ` ${icon('trophy')}` : ''}</b><small>${goalText(sc.goal)}. ${state}.</small></div>
+    const rows = (list: Scenario[]) =>
+      list.map((sc, i) => {
+        const done = won.includes(sc.id);
+        const open = isUnlocked(sc.id, won);
+        const req = requiredWin(sc.id);
+        const state = done ? 'Geschafft' : open ? `Etwa ${sc.minutes} Minuten` : `Gesperrt: zuerst ${req ? req.name : 'die Karte davor'} gewinnen`;
+        return `<div class="slot${open ? '' : ' locked'}">
+        <div class="slot-info"><b>${i + 1}. ${sc.name}${done ? ` ${icon('trophy')}` : ''}</b><small>${goalText(sc.goal, speciesOf(sc))}. ${state}.</small></div>
         <button class="btn${done ? ' secondary' : ''}" data-act="play" data-id="${sc.id}" ${open ? '' : 'disabled'}>${done ? 'Nochmal' : 'Spielen'}</button>
       </div>`;
-    });
+      });
     this.dialog(
-      'Die Otter-Kampagne',
-      `<p class="note">Fünf Karten, jede mit eigenem Tal und eigenem Ziel. Ein Sieg schaltet die nächste Karte frei.</p>
-      ${rows.join('')}
+      'Kampagnen',
+      `<p class="note"><b>Der Otterclan:</b> fünf Karten, jede mit eigenem Tal und eigenem Ziel. Ein Sieg schaltet die nächste Karte frei.</p>
+      ${rows(CAMPAIGN).join('')}
+      <p class="note"><b>Das Molchvolk:</b> drei Karten mit einem Volk, das mit Stein baut, im Wasser wohnt und die Dürre fürchtet. Offen nach dem ersten Sieg im Ottertal.</p>
+      ${rows(MOLCH_CAMPAIGN).join('')}
       <div class="btn-row"><button class="btn secondary" data-act="back">Zurück</button></div>`,
     );
   }
@@ -626,16 +636,17 @@ export class Menu {
     const next = won ? nextScenario(stats.scenario) : null;
     const goal = stats.goal;
     const daily = stats.scenario === DAILY_ID ? this.cb.dailyScore() : null;
+    const sp = SPECIES[stats.species];
     const lostText = daily
-      ? `Der letzte Otter ist gestorben. ${daily.days} ${daily.days === 1 ? 'Tag' : 'Tage'} überstanden, das sind ${daily.score} Punkte.${daily.submitted ? ' Die Wertung steht in der Bestenliste.' : ' Gib die Wertung ab, dann zählt sie in der Bestenliste.'}`
-      : 'Der letzte Otter ist gestorben. Beim nächsten Mal: früh eine Pumpe und einen Tank bauen, Deiche gegen die Flutwelle, und Hütten für die Stimmung.';
+      ? `Der letzte ${sp.one} ist gestorben. ${daily.days} ${daily.days === 1 ? 'Tag' : 'Tage'} überstanden, das sind ${daily.score} Punkte.${daily.submitted ? ' Die Wertung steht in der Bestenliste.' : ' Gib die Wertung ab, dann zählt sie in der Bestenliste.'}`
+      : `Der letzte ${sp.one} ist gestorben. ${sp.lostHint}`;
     const wonText =
       goal?.kind === 'stausee'
-        ? `Der See in der Schlucht hält, ${stats.population} Otter leben an seinem Ufer. Ihr könnt weiterspielen oder zur nächsten Karte gehen.`
-        : `Der Otterclan hat sich im Tal behauptet: ${stats.population} Otter leben im Jahr ${stats.season.year}. Ihr könnt weiterspielen und den Clan noch größer machen.`;
+        ? `Der See in der Schlucht hält, ${stats.population} ${sp.many} leben an seinem Ufer. Ihr könnt weiterspielen oder zur nächsten Karte gehen.`
+        : `${sp.title} hat sich im Tal behauptet: ${stats.population} ${sp.many} leben im Jahr ${stats.season.year}. Ihr könnt weiterspielen und die Siedlung noch größer machen.`;
     const rows = [
       ['Tage überstanden', String(stats.season.day - 1)],
-      ['Otter', String(stats.population)],
+      [sp.many, String(stats.population)],
       ['Geburten', String(stats.births)],
       ['Todesfälle', String(stats.deaths)],
       ['Vom Hochwasser verloren', `${stats.lostToFlood} Gebäude`],
@@ -643,7 +654,7 @@ export class Menu {
     ];
     if (daily) rows.unshift(['Wertung', `${daily.score} Punkte`]);
     this.dialog(
-      won ? 'Ziel erreicht' : 'Der Clan ist ausgelöscht',
+      won ? 'Ziel erreicht' : `${sp.title} ist ausgelöscht`,
       `<p>${won ? wonText : lostText}</p>
       <div class="end-stats">${rows.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('')}</div>
       ${daily && !daily.submitted ? this.dailyRow(daily) : ''}
@@ -787,16 +798,18 @@ export class Menu {
       }
       case 'retry': {
         const last = this.lastStats;
-        if (last) this.cb.onNewGame(last.scenario, last.seed, false);
+        if (last) this.cb.onNewGame(last.scenario, last.seed, false, last.species);
         else this.cb.onNewGame(CAMPAIGN[0].id, CAMPAIGN[0].seed, false);
         break;
       }
       case 'free': {
         const seedEl = this.root.querySelector('.seed') as HTMLInputElement;
         const freeEl = this.root.querySelector('.freebuild') as HTMLInputElement;
+        const volkEl = this.root.querySelector('.volk') as HTMLSelectElement | null;
         const seed = Math.max(1, Math.floor(Number(seedEl.value) || 1));
         this.seed = seed;
-        this.cb.onNewGame('frei', seed, freeEl.checked);
+        this.volk = volkEl && volkEl.value === 'molch' ? 'molch' : 'otter';
+        this.cb.onNewGame('frei', seed, freeEl.checked, this.volk);
         break;
       }
       case 'continue':

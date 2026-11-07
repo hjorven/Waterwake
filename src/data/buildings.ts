@@ -37,7 +37,15 @@ export type BuildingId =
   | 'aussichtsturm'
   | 'lagerhaus'
   | 'flossanleger'
-  | 'steg';
+  | 'steg'
+  // Molchvolk
+  | 'molchlager'
+  | 'molchhoehle'
+  | 'grotte'
+  | 'steinbruch'
+  | 'kiesbecken'
+  | 'algenfarm'
+  | 'laichplatz';
 
 /** Reiter im Baumenü */
 export type BuildingCategory = 'siedlung' | 'freude' | 'versorgung' | 'nahrung' | 'strom';
@@ -74,6 +82,8 @@ export interface BuildingDef {
   needsWater: boolean;
   /** steht auf einer Wasserzelle (Steg) */
   onWater: boolean;
+  /** darf auch im flachen Wasser stehen (Molchbauten), bis WET_DEPTH tief */
+  wet: boolean;
   /** Bauzeit in Sekunden Spielzeit */
   buildTime: number;
   /** macht Bewohner im Umkreis zufriedener */
@@ -107,6 +117,7 @@ function def(id: BuildingId, p: Partial_): BuildingDef {
     storage: 0,
     needsWater: false,
     onWater: false,
+    wet: false,
     buildTime: 12,
     joy: false,
     floodDepth: 0.4,
@@ -465,7 +476,76 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     powerUse: 0.6,
     floodDepth: 0.9,
   }),
+  // --- Molchvolk ------------------------------------------------------------------
+  molchlager: def('molchlager', {
+    name: 'Steinlager',
+    desc: 'Vorratslager des Molchvolks aus Steinplatten. Darf im flachen Wasser stehen, das Hochwasser schadet ihm nicht. Ein zweites Lager weit weg bildet einen eigenen Bezirk.',
+    size: 2,
+    cost: { stein: 12 },
+    storage: 40,
+    buildTime: 20,
+    wet: true,
+    floodDepth: 9,
+  }),
+  molchhoehle: def('molchhoehle', {
+    name: 'Molchhöhle',
+    desc: 'Höhle aus Stein für vier Molche. Steht sie im Wasser, sind die Bewohner zufrieden, und das Hochwasser schadet ihr nicht. Liegt sie trocken, leiden die Molche.',
+    cost: { stein: 7 },
+    housing: 4,
+    wet: true,
+    floodDepth: 9,
+  }),
+  grotte: def('grotte', {
+    name: 'Grotte',
+    desc: 'Große Höhle aus behauenem Stein, in der zehn Molche wohnen. Darf im Wasser stehen und hält jedes Hochwasser aus.',
+    size: 2,
+    cost: { stein: 16 },
+    housing: 10,
+    buildTime: 24,
+    wet: true,
+    floodDepth: 9,
+  }),
+  steinbruch: def('steinbruch', {
+    name: 'Steinbruch',
+    desc: 'Arbeiter brechen Stein aus Hängen im Umkreis, die mindestens zwei Stufen höher liegen als der Steinbruch. Der Fels geht nie aus.',
+    category: 'versorgung',
+    cost: { stein: 5 },
+    workers: 2,
+    range: 9,
+  }),
+  kiesbecken: def('kiesbecken', {
+    name: 'Kiesbecken',
+    desc: 'Ein Arbeiter spült das gespeicherte Wasser durch Kies und reinigt es, ganz ohne Strom. Wichtig vor der Schlammflut, denn schmutziges Wasser macht Molche schwer krank.',
+    category: 'versorgung',
+    cost: { stein: 10 },
+    workers: 1,
+    floodDepth: 1.6,
+  }),
+  algenfarm: def('algenfarm', {
+    name: 'Algenfarm',
+    desc: 'Steingitter im Fluss, an denen Algen wachsen. Reift nur, solange Wasser darüber steht; in der Dürre fällt die Ernte aus.',
+    category: 'nahrung',
+    size: 2,
+    cost: { stein: 6 },
+    workers: 1,
+    onWater: true,
+    floodDepth: 9,
+    harvest: { days: 3, good: 'algen', amount: 6 },
+  }),
+  laichplatz: def('laichplatz', {
+    name: 'Laichplatz',
+    desc: 'Geschützte Mulde im Wasser zum Laichen. Molche im Umkreis sind zufriedener, und es schlüpfen mehr Larven.',
+    category: 'freude',
+    cost: { stein: 4 },
+    range: 10,
+    joy: true,
+    onWater: true,
+    floodDepth: 9,
+  }),
 };
+
+/** So tief darf das Wasser stehen, wo ein Molchbau (`wet`) gesetzt wird */
+export const WET_DEPTH = 1.0;
 
 export const BUILDING_ORDER: BuildingId[] = [
   'huette', 'pfahlhaus', 'langhaus', 'lager', 'lagerhaus', 'steg', 'heiler', 'bibliothek', 'schule', 'sternwarte',
@@ -473,6 +553,7 @@ export const BUILDING_ORDER: BuildingId[] = [
   'pumpe', 'tank', 'zisterne', 'brunnen', 'flossanleger', 'holzfaeller', 'foerster', 'saegewerk', 'werkstatt', 'kraeutergarten',
   'sammler', 'beerengaertner', 'fischer', 'fischteich', 'feld', 'baeckerei',
   'wasserrad', 'laufrad', 'pumpwerk', 'sandfilter',
+  'molchlager', 'molchhoehle', 'grotte', 'steinbruch', 'kiesbecken', 'algenfarm', 'laichplatz',
 ];
 
 /** Gebäude mit Wasserspeicher, an denen Otter trinken */

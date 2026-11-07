@@ -1,7 +1,8 @@
 import { BUILDINGS, DAM_WOOD_PER_LEVEL, FLOOD_DESTROY_TIME, FLOOD_REPAIR_TIME, GATE_WOOD, type BuildingId } from '../data/buildings';
 import { GOOD_LABEL, GOODS, type Stock } from '../data/goods';
-import { freeScenario, type Goal, type Scenario } from '../data/maps';
-import { TECH_FOR, TECH_ORDER, TECHS, type TechId } from '../data/tech';
+import { freeScenario, speciesOf, type Goal, type Scenario } from '../data/maps';
+import { SPECIES, type Species, type SpeciesDef } from '../data/species';
+import { TECH_ORDER, TECHS, requiredFor, techTable, type TechId } from '../data/tech';
 import { Buildings, type Building, type PlacementContext } from './buildings';
 import { Citizens, type Env } from './citizens';
 import { Pathfinder } from './pathfinding';
@@ -31,8 +32,10 @@ export const MAX_DIKE = 2;
 /** Simulationsschritt in Sekunden; mehrere Schritte pro Bild */
 export const SIM_DT = 0.05;
 
-export const START_WOOD = 30;
-export const START_BERRIES = 12;
+/** Startvorrat des Otterclans (die Molche bringen Stein und Algen mit, siehe SPECIES) */
+export const START_WOOD = SPECIES.otter.startStock.holz ?? 0;
+export const START_BERRIES = SPECIES.otter.startStock.beeren ?? 0;
+/** Bewohner zu Beginn, bei beiden Völkern gleich */
 export const START_OTTERS = 6;
 
 /** Faktor von Strömungsstärke zu Strom am Wasserrad */
@@ -62,6 +65,8 @@ export interface WorldStats {
   wood: number;
   /** Nahrung aller Art */
   food: number;
+  /** das Volk dieser Siedlung */
+  species: Species;
   /** Vorrat je Ware */
   goods: Stock;
   storageCap: number;
@@ -139,6 +144,10 @@ export class World implements Env {
   readonly techs = new Set<TechId>();
   readonly seed: number;
   scenario: Scenario;
+  /** das Volk mit seinen Regeln; bestimmt Baustoff, Gebäude und Forschungstafel */
+  species: SpeciesDef = SPECIES.otter;
+  /** Technologie je Gebäude für das Volk */
+  private techFor: Partial<Record<BuildingId, TechId>> = techTable(SPECIES.otter.techs);
   weather: Weather = 'normal';
   /** Jahreszeiten laufen automatisch, false nach manuellem Eingriff */
   autoSeasons = true;
@@ -190,6 +199,7 @@ export class World implements Env {
     for (const i of map.sinks) this.water.sink[i] = 1;
     this.syncTerrain();
     this.buildings = new Buildings(map.w, map.h);
+    this.setSpecies(speciesOf(this.scenario));
     this.veg = new Vegetation(map.w, map.h);
     this.setWeather('normal');
     this.seasons = new Seasons(seed, this.scenario.seasons);
@@ -211,6 +221,13 @@ export class World implements Env {
 
   static generate(w: number, h: number, seed: number, scenario?: Scenario): World {
     return new World(generateValley(w, h, seed, scenario?.terrain), seed, scenario);
+  }
+
+  /** Volk wechseln, vor dem Absetzen oder Laden: Baustoff und Forschungstafel folgen */
+  setSpecies(id: Species): void {
+    this.species = SPECIES[id];
+    this.buildings.material = this.species.material;
+    this.techFor = techTable(this.species.techs);
   }
 
   static fromScenario(s: Scenario): World {
@@ -236,11 +253,10 @@ export class World implements Env {
     if (start >= 0) {
       const sx = start % this.w;
       const sy = (start / this.w) | 0;
-      const lager = this.buildings.place('lager', sx, sy, true);
-      lager.stock.holz = START_WOOD;
-      lager.stock.beeren = START_BERRIES;
+      const lager = this.buildings.place(this.species.camp, sx, sy, true);
+      for (const g of GOODS) lager.stock[g] = this.species.startStock[g] ?? 0;
       const ring = this.buildings.ring(lager).filter((i) => this.walkable(i));
-      for (let k = 0; k < START_OTTERS; k++) {
+      for (let k = 0; k < START_OTTERS && ring.length > 0; k++) {
         const c = ring[(k * 3) % ring.length];
         this.citizens.spawn(c % this.w, (c / this.w) | 0);
       }
@@ -248,12 +264,12 @@ export class World implements Env {
     this.time = 0;
     this.water.added = this.water.drained = this.water.evaporated = 0;
     this.messages.length = 0;
-    if (withClan) this.log('Der Otterclan kommt am Fluss an. Baut eine Pumpe und Hütten, bevor die Dürre kommt.');
+    if (withClan) this.log(this.species.arrival);
   }
 
   /** Gesetzter Start der Karte, wenn dort ein Lager passt, sonst die beste Stelle am Fluss */
   private chooseStart(): number {
-    if (this.start >= 0 && !this.buildings.canPlace('lager', this.start % this.w, (this.start / this.w) | 0, this.placementContext())) return this.start;
+    if (this.start >= 0 && !this.buildings.canPlace(this.species.camp, this.start % this.w, (this.start / this.w) | 0, this.placementContext())) return this.start;
     return this.findStart();
   }
 
@@ -272,7 +288,7 @@ export class World implements Env {
         const i = y * w + x;
         if (this.ground[i] < 3 || this.ground[i] > 9) continue;
         if (this.veg.moist[i] === 0) continue;
-        if (this.buildings.canPlace('lager', x, y, ctx)) continue;
+        if (this.buildings.canPlace(this.species.camp, x, y, ctx)) continue;
         // Umgebung soll möglichst eben sein
         let rough = 0;
         for (let dy = -2; dy <= 3; dy++) {
@@ -363,16 +379,17 @@ export class World implements Env {
   // --- Forschung ---------------------------------------------------------------
 
   isUnlocked(id: BuildingId): boolean {
-    const tech = TECH_FOR[id];
+    const tech = this.techFor[id];
     return tech === undefined || this.techs.has(tech);
   }
 
   /** Technologie erforschen, false wenn Wissen oder Voraussetzung fehlen */
   research(id: TechId): boolean {
     const t = TECHS[id];
-    if (!t || this.techs.has(id)) return false;
-    if (t.requires && !this.techs.has(t.requires)) {
-      this.log(`${t.name}: zuerst ${TECHS[t.requires].name} erforschen.`);
+    if (!t || this.techs.has(id) || !this.species.techs.includes(id)) return false;
+    const req = requiredFor(id, this.species.techs);
+    if (req && !this.techs.has(req)) {
+      this.log(`${t.name}: zuerst ${TECHS[req].name} erforschen.`);
       return false;
     }
     if (this.knowledge < t.cost) {
@@ -517,7 +534,7 @@ export class World implements Env {
         this.log(plants(this.poisonedToday, 'am schmutzigen Wasser eingegangen'));
         this.poisonedToday = 0;
       }
-      this.woodWarning();
+      this.materialWarning();
       this.staffWarning();
     }
     this.citizens.step(dt);
@@ -597,9 +614,15 @@ export class World implements Env {
       if (!h || !b.built || b.growth >= 1) continue;
       let moist = 0;
       const cells = this.buildings.cells(b);
-      for (const i of cells) moist += this.veg.moist[i];
-      moist /= cells.length * 255;
-      if (moist <= 0) continue;
+      if (BUILDINGS[b.def].onWater) {
+        // Algen wachsen nur, solange die Farm ganz im Wasser steht
+        if (cells.some((i) => this.water.depth[i] < 0.1)) continue;
+        moist = 1;
+      } else {
+        for (const i of cells) moist += this.veg.moist[i];
+        moist /= cells.length * 255;
+        if (moist <= 0) continue;
+      }
       b.growth = Math.min(1, b.growth + (dt * (0.4 + 0.6 * moist)) / (h.days * DAY));
     }
   }
@@ -620,25 +643,31 @@ export class World implements Env {
     this.log(`Ohne Arbeiter: ${list}. Mehr Hütten bringen Nachwuchs, Abreißen gibt Arbeiter frei.`);
   }
 
-  /** Baustellen warten auf Holz oder Bretter, aber es gibt keine und niemand macht Nachschub */
-  private woodWarning(): void {
-    let waitWood = false;
+  /** Baustellen warten auf Baustoff (Holz oder Stein) oder Bretter, aber es gibt keine und niemand macht Nachschub */
+  private materialWarning(): void {
+    const material = this.species.material;
+    const producer: BuildingId = material === 'stein' ? 'steinbruch' : 'holzfaeller';
+    let waitMaterial = false;
     let waitPlanks = false;
-    let woodcutter = false;
+    let hasProducer = false;
     let sawmill = false;
     for (const b of this.buildings.alive()) {
       if (b.built) {
-        if (b.def === 'holzfaeller') woodcutter = true;
+        if (b.def === producer) hasProducer = true;
         if (b.def === 'saegewerk') sawmill = true;
       } else {
-        if (b.delivered.holz < (BUILDINGS[b.def].cost.holz ?? 0)) waitWood = true;
-        if (b.delivered.bretter < (BUILDINGS[b.def].cost.bretter ?? 0)) waitPlanks = true;
+        if (b.delivered[material] < (b.cost[material] ?? 0)) waitMaterial = true;
+        if (b.delivered.bretter < (b.cost.bretter ?? 0)) waitPlanks = true;
       }
     }
     // Warnungen höchstens alle drei Tage wiederholen
-    if (waitWood && !woodcutter && this.buildings.total('holz') < 1 && this.lastDay - this.woodWarnDay >= 3) {
+    if (waitMaterial && !hasProducer && this.buildings.total(material) < 1 && this.lastDay - this.woodWarnDay >= 3) {
       this.woodWarnDay = this.lastDay;
-      this.log('Das Holz ist alle, Baustellen warten. Ein Holzfäller schafft Nachschub, Abreißen gibt Holz zurück.');
+      this.log(
+        material === 'stein'
+          ? 'Der Stein ist alle, Baustellen warten. Ein Steinbruch am Hang bricht Nachschub, Abreißen gibt Stein zurück.'
+          : 'Das Holz ist alle, Baustellen warten. Ein Holzfäller schafft Nachschub, Abreißen gibt Holz zurück.',
+      );
     }
     if (waitPlanks && !sawmill && this.buildings.total('bretter') < 1 && this.lastDay - this.plankWarnDay >= 3) {
       this.plankWarnDay = this.lastDay;
@@ -695,7 +724,7 @@ export class World implements Env {
     if (pop === 0) {
       if (this.outcome !== 'lost') {
         this.outcome = 'lost';
-        this.log('Der Otterclan ist ausgelöscht.');
+        this.log(this.species.wipedOut);
       }
       return;
     }
@@ -715,10 +744,10 @@ export class World implements Env {
     if (this.outcome !== null) return;
     if (goal.kind === 'clan' && pop >= goal.population && this.seasons.year >= goal.year) {
       this.outcome = 'won';
-      this.log(`Ziel erreicht: ${pop} Otter im Jahr ${this.seasons.year}. Der Clan ist im Tal zuhause.`);
+      this.log(`Ziel erreicht: ${pop} ${this.species.many} im Jahr ${this.seasons.year}. ${this.species.title} ist im Tal zuhause.`);
     } else if (goal.kind === 'stausee' && this.goalHeld >= goal.days * DAY && pop >= goal.population) {
       this.outcome = 'won';
-      this.log(`Ziel erreicht: Der See in der Schlucht hält, ${pop} Otter leben an seinem Ufer.`);
+      this.log(`Ziel erreicht: Der See in der Schlucht hält, ${pop} ${this.species.many} leben an seinem Ufer.`);
     }
   }
 
@@ -735,7 +764,8 @@ export class World implements Env {
       sick: this.citizens.sick(),
       housing: this.buildings.housing(),
       wood: goods.holz,
-      food: goods.beeren + goods.fisch + goods.brot,
+      food: goods.beeren + goods.fisch + goods.brot + goods.algen,
+      species: this.species.id,
       goods,
       storageCap: this.buildings.storageCapacity(),
       knowledge: this.knowledge,
@@ -785,17 +815,18 @@ export class World implements Env {
     this.terrainVersion++;
   }
 
-  /** Holz aus den Lagern nehmen, false wenn nicht genug da ist */
-  private payWood(amount: number, i: number): boolean {
+  /** Baustoff des Volkes (Holz oder Stein) aus den Lagern nehmen, false wenn nicht genug da ist */
+  private payMaterial(amount: number, i: number): boolean {
     if (amount <= 0 || this.freeBuild) return true;
-    if (this.buildings.total('holz') < amount) {
+    const material = this.species.material;
+    if (this.buildings.total(material) < amount) {
       if (this.time - this.woodWarnAt > 5) {
         this.woodWarnAt = this.time;
-        this.log(`Nicht genug Holz (${amount} nötig).`);
+        this.log(`Nicht genug ${GOOD_LABEL[material]} (${amount} nötig).`);
       }
       return false;
     }
-    this.buildings.takeGood('holz', amount, i % this.w, (i / this.w) | 0);
+    this.buildings.takeGood(material, amount, i % this.w, (i / this.w) | 0);
     return true;
   }
 
@@ -836,7 +867,7 @@ export class World implements Env {
       case 'damm': {
         const target = Math.max(1, Math.min(MAX_DAM, damHeight, MAX_HEIGHT - g));
         if (this.gate[i] || s >= target) return false;
-        if (!this.payWood((target - s) * DAM_WOOD_PER_LEVEL, i)) return false;
+        if (!this.payMaterial((target - s) * DAM_WOOD_PER_LEVEL, i)) return false;
         this.setStruct(i, target);
         return true;
       }
@@ -849,7 +880,7 @@ export class World implements Env {
       case 'schleuse': {
         if (this.gate[i]) return this.toggleGate(i);
         const target = Math.max(1, Math.min(MAX_DAM, damHeight, MAX_HEIGHT - g));
-        if (!this.payWood(GATE_WOOD, i)) return false;
+        if (!this.payMaterial(GATE_WOOD, i)) return false;
         this.gate[i] = target;
         this.gateOpen[i] = 0;
         this.setStruct(i, target);
@@ -870,7 +901,7 @@ export class World implements Env {
         return true;
       case 'start': {
         if (!this.editor) return false;
-        const why = this.buildings.canPlace('lager', i % this.w, (i / this.w) | 0, this.placementContext());
+        const why = this.buildings.canPlace(this.species.camp, i % this.w, (i / this.w) | 0, this.placementContext());
         if (why) {
           this.log(`Hier passt kein Lager hin: ${why}.`);
           return false;
@@ -906,7 +937,8 @@ export class World implements Env {
   // --- Gebäude ------------------------------------------------------------------
 
   placementError(id: BuildingId, x: number, y: number): string | null {
-    if (!this.isUnlocked(id)) return `zuerst ${TECHS[TECH_FOR[id]!].name} erforschen`;
+    if (!this.species.buildings.includes(id)) return `${BUILDINGS[id].name} baut das ${this.species.name} nicht`;
+    if (!this.isUnlocked(id)) return `zuerst ${TECHS[this.techFor[id]!].name} erforschen`;
     return this.buildings.canPlace(id, x, y, {
       ground: this.ground,
       struct: this.struct,

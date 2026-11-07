@@ -4,8 +4,9 @@ import { BUILDINGS, type BuildingId } from './data/buildings';
 import { costText } from './data/goods';
 import { CUSTOM_ID, coreFromData, customScenario, flatMap, isMapCode, newMapId, normalizeCode, type CustomMap, type MapCore } from './data/custom';
 import { DAILY_ID, dailyScore } from './data/daily';
-import { campaignIndex, freeScenario, OTTERTAL, scenarioById, type Scenario } from './data/maps';
-import { TECH_FOR, TECHS, type TechId } from './data/tech';
+import { campaignIndex, freeScenario, OTTERTAL, scenarioById, speciesOf, type Scenario } from './data/maps';
+import { costFor, SPECIES, type Species } from './data/species';
+import { TECHS, techTable, type TechId } from './data/tech';
 import { cloudConnect, cloudDelete, cloudDownload, cloudHasAccount, cloudList, cloudUpload, dailyBoard, dailySubmit, mapDownload, mapList, mapPlayed, mapUpload, type DailyResult } from './online/cloud';
 import {
   deleteLocalSave,
@@ -42,6 +43,9 @@ const params = new URLSearchParams(location.search);
 const app = document.getElementById('app')!;
 const settings: Settings = loadSettings();
 if (params.has('flach')) settings.tiltShift = false;
+/** Volk des laufenden Spiels, kommt mit 'ready' aus der Simulation */
+let currentSpecies: Species = 'otter';
+let techFor = techTable(SPECIES.otter.techs);
 
 // --- Szene -----------------------------------------------------------------
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -190,6 +194,10 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
       instances.setCitizens(new Float32Array(0), 0, performance.now() / 1000);
       instances.setRafts(new Float32Array(0), 0);
       hud.reset();
+      currentSpecies = msg.species;
+      techFor = techTable(SPECIES[msg.species].techs);
+      instances.setSpecies(msg.species);
+      hud.setSpecies(msg.species);
       hud.setVisible(true);
       running = true;
       editorMode = msg.editor;
@@ -342,11 +350,11 @@ function setSpeed(s: number): void {
   hud.setSpeed(s);
 }
 
-function startGame(scenario: string, seed: number, freeBuild: boolean): void {
+function startGame(scenario: string, seed: number, freeBuild: boolean, species?: Species): void {
   const sc = scenario === 'frei' ? freeScenario(seed) : scenarioById(scenario, seed);
   pendingIntro = sc;
   running = false;
-  send({ type: 'init', scenario: sc.id, seed: sc.seed, w: sc.w, h: sc.h, freeBuild, unlockAll: freeBuild || params.has('alles') });
+  send({ type: 'init', scenario: sc.id, seed: sc.seed, w: sc.w, h: sc.h, freeBuild, unlockAll: freeBuild || params.has('alles'), species: species ?? speciesOf(sc) });
   speed = 1;
 }
 
@@ -440,9 +448,9 @@ function autoSubmitDaily(): void {
 }
 
 const menu = new Menu(app, {
-  onNewGame: (scenario, seed, freeBuild) => {
+  onNewGame: (scenario, seed, freeBuild, species) => {
     menu.hide();
-    startGame(scenario, seed, freeBuild);
+    startGame(scenario, seed, freeBuild, species);
   },
   onResume: () => resume(),
   onMainMenu: () => showStart(),
@@ -605,7 +613,8 @@ function markOccupied(id: BuildingId, x: number, y: number): void {
 }
 
 function placementError(id: BuildingId, x: number, y: number): string | null {
-  const tech = TECH_FOR[id];
+  if (!SPECIES[currentSpecies].buildings.includes(id)) return `${BUILDINGS[id].name} baut das ${SPECIES[currentSpecies].name} nicht`;
+  const tech = techFor[id];
   if (tech && stats && !stats.techs.includes(tech)) return `zuerst ${TECHS[tech].name} erforschen`;
   return canPlaceAt(id, x, y, MAP_W, MAP_H, occ, { ground, struct, depth, sink });
 }
@@ -630,7 +639,7 @@ function updatePreview(): void {
     footprint.scale.set(size, size, 1);
     (footprint.material as THREE.MeshBasicMaterial).color.setHex(err ? 0xff4040 : 0x66ff66);
     footprint.visible = true;
-    hud.setHint(err ? `Hier nicht möglich: ${err}.` : `${BUILDINGS[id].name} setzen (${costText(BUILDINGS[id].cost)}).`, !!err);
+    hud.setHint(err ? `Hier nicht möglich: ${err}.` : `${BUILDINGS[id].name} setzen (${costText(costFor(BUILDINGS[id].cost, SPECIES[currentSpecies].material))}).`, !!err);
   } else if (mode.kind === 'tool') {
     const x = hoverCell % MAP_W;
     const y = (hoverCell / MAP_W) | 0;
@@ -793,7 +802,9 @@ if (params.has('editor')) {
 } else if (params.has('karte') || params.has('seed') || params.has('frei')) {
   const karte = params.get('karte');
   const seed = Number(params.get('seed')) || OTTERTAL.seed;
-  startGame(karte && karte !== 'frei' ? karte : 'frei', seed, params.has('frei'));
+  // das Volk lässt sich nur im freien Spiel wählen, Kampagnenkarten bringen ihres mit
+  const volk = (!karte || karte === 'frei') && params.get('volk') === 'molch' ? 'molch' : undefined;
+  startGame(karte && karte !== 'frei' ? karte : 'frei', seed, params.has('frei'), volk);
   if (!karte) pendingIntro = null;
 } else {
   pendingIntro = null;
@@ -822,7 +833,8 @@ if (params.has('editor')) {
   research: (tech: TechId) => send({ type: 'research', tech }),
   unlockAll: () => send({ type: 'unlock' }),
   setSpeed: (s: number) => setSpeed(s),
-  newGame: (scenario: string, seed: number, free = false) => startGame(scenario, seed, free),
+  newGame: (scenario: string, seed: number, free = false, species?: Species) => startGame(scenario, seed, free, species),
+  getSpecies: () => currentSpecies,
   save: (slot: string) => send({ type: 'save', slot, name: saveName() }),
   load: (slot: string) => {
     const data = readLocalSave(slot);

@@ -1,4 +1,6 @@
 import { customScenario, type CustomMap } from '../data/custom';
+import { speciesOf } from '../data/maps';
+import type { Species } from '../data/species';
 import { freeScenario, scenarioById } from '../data/maps';
 import { decodeBytes, decodeFloats, encodeBytes, encodeFloats } from './codec';
 import type { TechId } from '../data/tech';
@@ -34,6 +36,8 @@ export interface SaveGame {
   goalHeld?: number;
   /** eigene oder geteilte Karte, eingebettet, damit sie ohne Cloud wieder lädt (ab Version 5) */
   custom?: CustomMap;
+  /** Volk, fehlt in älteren Spielständen (dann Otter) */
+  species?: Species;
   ground: string;
   struct: string;
   gate: string;
@@ -84,6 +88,7 @@ export function serializeWorld(world: World, name = ''): { data: SaveGame; meta:
     lostToFlood: world.lostToFlood,
     goalHeld: world.goalHeld,
     custom: world.scenario.custom,
+    species: world.species.id,
     ground: encodeBytes(world.ground),
     struct: encodeBytes(world.struct),
     gate: encodeBytes(world.gate),
@@ -134,6 +139,8 @@ export function restoreWorld(s: SaveGame): World {
   for (let i = 0; i < n; i++) if (sink[i]) sinks.push(i);
   const scenario = s.custom ? customScenario(s.custom) : s.scenario === 'frei' ? freeScenario(s.seed, s.w, s.h) : scenarioById(s.scenario, s.seed);
   const world = new World({ w: s.w, h: s.h, ground: decodeBytes(s.ground), sources: s.sources.map((x) => ({ ...x })), sinks }, s.seed, scenario);
+  // das Volk vor den Gebäuden setzen, damit die Baukosten zum Baustoff passen
+  world.setSpecies(s.species ?? speciesOf(scenario));
   world.struct.set(decodeBytes(s.struct));
   world.gate.set(decodeBytes(s.gate));
   world.gateOpen.set(decodeBytes(s.gateOpen));
