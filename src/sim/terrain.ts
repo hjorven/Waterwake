@@ -30,6 +30,14 @@ export function generateValley(w: number, h: number, seed: number): MapData {
   const centerX = (y: number) =>
     w / 2 + Math.sin(y * 0.065 + phase1) * w * 0.14 + Math.sin(y * 0.021 + phase2) * w * 0.08;
 
+  // Tümpel im Flussbett: alle paar Zeilen eine Stufe tiefer, damit in der
+  // Dürre ein paar Tage lang Wasserlöcher bleiben
+  const poolRows = new Set<number>();
+  for (let y = 9 + Math.floor(rnd() * 4); y < h - 8; y += 9 + Math.floor(rnd() * 5)) {
+    poolRows.add(y);
+    poolRows.add(y + 1);
+  }
+
   for (let y = 0; y < h; y++) {
     const cx = centerX(y);
     const t = y / (h - 1);
@@ -45,7 +53,7 @@ export function generateValley(w: number, h: number, seed: number): MapData {
       const hills = 9 + n * 7 + gorge * 3;
       let hgt: number;
       if (d < halfBed) {
-        hgt = bed;
+        hgt = poolRows.has(y) ? bed - 1 : bed;
       } else {
         const rise = (d - halfBed) * slope;
         // Terrassen: flache Stücke durch weiches Treppenmuster

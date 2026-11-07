@@ -1,4 +1,4 @@
-import { mulberry32 } from './rng';
+import { mulberry32, type Rng } from './rng';
 import type { Weather } from './world';
 
 /** Länge eines Spieltags in Simulationssekunden */
@@ -18,23 +18,39 @@ export interface SeasonInfo {
   nextMax: number;
 }
 
+/** Gespeicherter Zustand des Jahreslaufs */
+export interface SeasonsSave {
+  phase: Weather;
+  year: number;
+  time: number;
+  phaseStart: number;
+  phaseEnd: number;
+  nextLength: number;
+  next: Weather;
+  nextMin: number;
+  nextMax: number;
+  slot: number;
+  rng: number;
+}
+
 /**
  * Jahreslauf: Normalzeit, Schneeschmelze, Normalzeit, Dürre. Die Dürre
- * wird mit den Jahren länger. Die nächste Phase wird mit einer
- * ungefähren Dauer angekündigt.
+ * wird mit den Jahren länger, die Flutwelle der Schmelze höher. Die
+ * nächste Phase wird mit einer ungefähren Dauer angekündigt.
  */
 export class Seasons {
   phase: Weather = 'normal';
   year = 1;
   time = 0;
-  /** Ende der aktuellen Phase in Sekunden */
+  /** Beginn und Ende der aktuellen Phase in Sekunden */
+  phaseStart = 0;
   phaseEnd: number;
   /** tatsächliche Länge der nächsten Phase in Tagen */
   private nextLength: number;
   next: Weather = 'schmelze';
   nextMin: number;
   nextMax: number;
-  private readonly rnd: () => number;
+  private readonly rnd: Rng;
   private slot = 0;
 
   constructor(seed: number) {
@@ -75,11 +91,25 @@ export class Seasons {
     this.slot = (this.slot + 1) % Seasons.ORDER.length;
     this.phase = this.next;
     if (this.phase === 'normal' && this.slot === 0) this.year++;
+    this.phaseStart = this.time;
     this.phaseEnd = this.time + this.nextLength * DAY;
     this.next = Seasons.ORDER[(this.slot + 1) % Seasons.ORDER.length];
     this.nextLength = this.lengthFor(this.next);
     [this.nextMin, this.nextMax] = this.announce(this.nextLength);
     return this.phase;
+  }
+
+  /**
+   * Quellenfaktor in der Schneeschmelze: beginnt beim Dreifachen und
+   * schwillt in der Mitte der Phase zur Flutwelle an, mit den Jahren
+   * stärker.
+   */
+  meltFactor(): number {
+    if (this.phase !== 'schmelze') return 1;
+    const len = Math.max(1, this.phaseEnd - this.phaseStart);
+    const p = Math.max(0, Math.min(1, (this.time - this.phaseStart) / len));
+    const peak = Math.min(5, 2 + 1.5 * (this.year - 1));
+    return 3 + peak * Math.sin(Math.PI * p);
   }
 
   info(): SeasonInfo {
@@ -92,5 +122,35 @@ export class Seasons {
       nextMin: this.nextMin,
       nextMax: this.nextMax,
     };
+  }
+
+  save(): SeasonsSave {
+    return {
+      phase: this.phase,
+      year: this.year,
+      time: this.time,
+      phaseStart: this.phaseStart,
+      phaseEnd: this.phaseEnd,
+      nextLength: this.nextLength,
+      next: this.next,
+      nextMin: this.nextMin,
+      nextMax: this.nextMax,
+      slot: this.slot,
+      rng: this.rnd.state,
+    };
+  }
+
+  restore(s: SeasonsSave): void {
+    this.phase = s.phase;
+    this.year = s.year;
+    this.time = s.time;
+    this.phaseStart = s.phaseStart;
+    this.phaseEnd = s.phaseEnd;
+    this.nextLength = s.nextLength;
+    this.next = s.next;
+    this.nextMin = s.nextMin;
+    this.nextMax = s.nextMax;
+    this.slot = s.slot;
+    this.rnd.state = s.rng;
   }
 }

@@ -1,10 +1,12 @@
 import type { BuildingId } from '../data/buildings';
-import type { SeasonInfo } from './seasons';
-import type { Tool, Weather } from './world';
+import type { SaveGame, SaveMeta } from './save';
+import type { Tool, Weather, WorldStats } from './world';
 
 /** Nachrichten vom Hauptthread an den Simulations-Worker */
 export type ToWorker =
-  | { type: 'init'; w: number; h: number; seed: number; freeBuild?: boolean }
+  | { type: 'init'; scenario: string; seed: number; w: number; h: number; freeBuild?: boolean }
+  | { type: 'load'; data: SaveGame }
+  | { type: 'save'; slot: string; name: string }
   | { type: 'edit'; tool: Tool; cells: number[]; damHeight: number }
   | { type: 'weather'; weather: Weather }
   | { type: 'speed'; speed: number }
@@ -24,9 +26,11 @@ export interface BuildingSnap {
   wood: number;
   berries: number;
   woodDelivered: number;
+  flooded: boolean;
+  damage: number;
 }
 
-export interface SimStats {
+export interface SimStats extends WorldStats {
   /** Spielzeit in Sekunden Simulation */
   time: number;
   weather: Weather;
@@ -41,21 +45,14 @@ export interface SimStats {
   evaporation: number;
   /** Rechenzeit pro Simulationsschritt in ms */
   stepMs: number;
-  population: number;
-  housing: number;
-  wood: number;
-  berries: number;
-  storageCap: number;
-  water: number;
-  waterCap: number;
-  season: SeasonInfo;
 }
 
-/** Werte je Bewohner im Float32Array: Id, x, y, z, Blickrichtung, Zustand, Ware */
-export const CITIZEN_STRIDE = 7;
+/** Werte je Bewohner im Float32Array: Id, x, y, z, Blickrichtung, Zustand, Ware, Größe */
+export const CITIZEN_STRIDE = 8;
 
 /** Nachrichten vom Worker an den Hauptthread */
 export type FromWorker =
+  | { type: 'ready'; w: number; h: number; scenario: string; loaded: boolean }
   | {
       type: 'terrain';
       w: number;
@@ -83,4 +80,5 @@ export type FromWorker =
       dry: Uint8Array<ArrayBufferLike>;
       version: number;
     }
-  | { type: 'buildings'; list: BuildingSnap[]; version: number };
+  | { type: 'buildings'; list: BuildingSnap[]; version: number }
+  | { type: 'saved'; slot: string; name: string; data: SaveGame; meta: SaveMeta };

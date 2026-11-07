@@ -2,16 +2,31 @@ import * as THREE from 'three';
 
 const CHUNK = 16;
 
-/** Farbe nach Höhe: Flussbett, Wiese, Hang, Fels */
+/** Farbe nach Höhe: Flussbett, Wiese, Bergwiese, Fels, Geröll */
 function groundColor(h: number, out: THREE.Color): void {
   if (h <= 2) out.setHex(0x8c7a52);
   else if (h <= 5) out.setHex(0x6fa64c);
   else if (h <= 8) out.setHex(0x5f944a);
-  else if (h <= 11) out.setHex(0x8e9a6a);
-  else if (h <= 13) out.setHex(0x9b9385);
-  else out.setHex(0xd9d6cc);
+  else if (h <= 11) out.setHex(0x8da157);
+  else if (h <= 13) out.setHex(0x9a8a74);
+  else out.setHex(0xd6d0c2);
   // leichte Stufung, damit Terrassen sichtbar bleiben
   out.offsetHSL(0, 0, (h % 2) * 0.02);
+}
+
+/** feste Zufallszahl 0..1 je Zelle */
+function cellHash(i: number): number {
+  let t = (i + 0x6d2b79f5) | 0;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+
+/** Deckfläche: Grundfarbe mit leichter Fleckung, damit große Flächen nicht flach wirken */
+function topColor(h: number, i: number, out: THREE.Color): void {
+  groundColor(h, out);
+  const r = cellHash(i);
+  out.offsetHSL((cellHash(i * 3 + 1) - 0.5) * 0.02, (r - 0.5) * 0.08, (r - 0.5) * 0.06);
 }
 
 const DAM_COLOR = new THREE.Color(0x6b5a45);
@@ -159,7 +174,7 @@ export class TerrainRenderer {
         const s = this.struct[i];
         const top = g + s;
         if (s > 0) color.copy(DAM_TOP);
-        else groundColor(g, color);
+        else topColor(g, i, color);
         // Deckfläche (y ist Höhe, z ist Kartenzeile)
         offsets[(y - y0) * CHUNK + (x - x0)] = positions.length / 3;
         quad(x, top, y, x, top, y + 1, x + 1, top, y + 1, x + 1, top, y, 0, 1, 0, color);

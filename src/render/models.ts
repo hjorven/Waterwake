@@ -212,6 +212,31 @@ export function buildingGeometry(id: BuildingId): THREE.BufferGeometry {
         cylinder(0.08, 0.2, C.holzDunkel, -0.32, 0, 0.3, 5, 0.03),
         ball(0.12, C.laub, -0.32, 0.3, 0.3),
       ]);
+    case 'badesteg': {
+      const parts: THREE.BufferGeometry[] = [box(0.92, 0.06, 0.92, C.holzHell, 0, 0.3, 0)];
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) parts.push(cylinder(0.05, 0.32, C.holzDunkel, sx * 0.38, 0, sz * 0.38, 6));
+      // Geländer an einer Seite und Leiter ins Wasser an der anderen
+      parts.push(box(0.92, 0.04, 0.04, C.holz, 0, 0.64, -0.44));
+      parts.push(box(0.04, 0.3, 0.04, C.holz, -0.42, 0.36, -0.44));
+      parts.push(box(0.04, 0.3, 0.04, C.holz, 0.42, 0.36, -0.44));
+      parts.push(box(0.04, 0.5, 0.04, C.holz, -0.12, 0.02, 0.47));
+      parts.push(box(0.04, 0.5, 0.04, C.holz, 0.12, 0.02, 0.47));
+      for (const y of [0.12, 0.26, 0.4]) parts.push(box(0.2, 0.03, 0.03, C.holzHell, 0, y, 0.47));
+      parts.push(box(0.3, 0.03, 0.2, C.beere, 0.2, 0.33, 0.1)); // Handtuch
+      return merge(parts);
+    }
+    case 'musikplatz': {
+      const parts: THREE.BufferGeometry[] = [cylinder(0.46, 0.08, C.holzHell, 0, 0, 0, 10)];
+      parts.push(cylinder(0.14, 0.22, C.holzDunkel, 0.16, 0.08, 0.1, 8)); // Trommel
+      parts.push(cylinder(0.15, 0.03, C.stroh, 0.16, 0.3, 0.1, 8));
+      parts.push(cylinder(0.1, 0.18, C.holzDunkel, -0.14, 0.08, 0.22, 8)); // kleine Trommel
+      parts.push(cylinder(0.11, 0.03, C.stroh, -0.14, 0.26, 0.22, 8));
+      parts.push(box(0.05, 0.95, 0.05, C.holzDunkel, -0.3, 0.08, -0.3)); // Fahnenmast
+      parts.push(box(0.34, 0.2, 0.02, C.beere, -0.12, 0.8, -0.3));
+      parts.push(box(0.05, 0.95, 0.05, C.holzDunkel, 0.3, 0.08, -0.3));
+      parts.push(box(0.34, 0.2, 0.02, C.wasser, 0.12, 0.8, -0.3));
+      return merge(parts);
+    }
     case 'lager': {
       const parts: THREE.BufferGeometry[] = [box(1.8, 0.08, 1.8, C.holzDunkel)];
       for (const sx of [-1, 1]) for (const sz of [-1, 1]) parts.push(box(0.1, 0.95, 0.1, C.holz, sx * 0.82, 0.08, sz * 0.82));
@@ -226,4 +251,4 @@ export function buildingGeometry(id: BuildingId): THREE.BufferGeometry {
   }
 }
 
-export const BUILDING_IDS: BuildingId[] = ['lager', 'huette', 'pumpe', 'tank', 'sammler', 'holzfaeller', 'foerster'];
+export const BUILDING_IDS: BuildingId[] = ['lager', 'huette', 'pumpe', 'tank', 'sammler', 'holzfaeller', 'foerster', 'badesteg', 'musikplatz'];

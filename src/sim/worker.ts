@@ -1,6 +1,8 @@
 /// <reference lib="webworker" />
+import { freeScenario, scenarioById } from '../data/maps';
 import { GOOD_CODE, STATE_CODE } from './citizens';
 import { CITIZEN_STRIDE, type BuildingSnap, type FromWorker, type ToWorker } from './protocol';
+import { restoreWorld, serializeWorld } from './save';
 import { SIM_DT, World } from './world';
 
 declare const self: DedicatedWorkerGlobalScope;
@@ -15,6 +17,7 @@ let vegSentAt = 0;
 let lastTick = performance.now();
 let acc = 0;
 let stepMs = 0;
+let lastAutoDay = -1;
 // Messwerte, über etwa eine Sekunde geglättet
 let inflow = 0;
 let outflow = 0;
@@ -63,6 +66,8 @@ function sendBuildings(): void {
       wood: b.stock.holz,
       berries: b.stock.beeren,
       woodDelivered: b.woodDelivered,
+      flooded: b.flooded,
+      damage: b.damage,
     });
   }
   post({ type: 'buildings', list, version: world.buildings.version });
@@ -80,6 +85,22 @@ function sendVeg(): void {
     dry: world.veg.dry.slice(),
     version: world.veg.version,
   });
+}
+
+function sendSave(slot: string, name: string): void {
+  if (!world) return;
+  const { data, meta } = serializeWorld(world, name);
+  post({ type: 'saved', slot, name, data, meta });
+}
+
+function useWorld(w: World, loaded: boolean): void {
+  world = w;
+  sentTerrain = sentBuildings = sentVeg = sentSoil = -1;
+  lastTick = performance.now();
+  acc = 0;
+  inflow = outflow = evap = 0;
+  lastAutoDay = w.seasons.info().day;
+  post({ type: 'ready', w: w.w, h: w.h, scenario: w.scenario.id, loaded });
 }
 
 function tick(): void {
@@ -137,6 +158,7 @@ function tick(): void {
     cz[k++] = c.heading;
     cz[k++] = STATE_CODE[c.state];
     cz[k++] = c.carry ? GOOD_CODE[c.carry] : 0;
+    cz[k++] = c.child ? 0.6 : 1;
   }
 
   const messages = world.messages.splice(0, world.messages.length);
@@ -163,17 +185,34 @@ function tick(): void {
     },
     [depth.buffer, v.buffer, cz.buffer],
   );
+
+  // Einmal am Tag automatisch speichern
+  if (s.season.day !== lastAutoDay) {
+    lastAutoDay = s.season.day;
+    if (s.population > 0) sendSave('auto', 'Automatisch');
+  }
 }
 
 self.onmessage = (e: MessageEvent<ToWorker>) => {
   const msg = e.data;
   switch (msg.type) {
-    case 'init':
-      world = World.generate(msg.w, msg.h, msg.seed);
-      world.freeBuild = !!msg.freeBuild;
-      world.settle();
-      sentTerrain = sentBuildings = sentVeg = sentSoil = -1;
-      lastTick = performance.now();
+    case 'init': {
+      const scenario = msg.scenario === 'frei' ? freeScenario(msg.seed, msg.w, msg.h) : scenarioById(msg.scenario, msg.seed);
+      const w = World.fromScenario(scenario);
+      w.freeBuild = !!msg.freeBuild;
+      w.settle();
+      useWorld(w, false);
+      break;
+    }
+    case 'load':
+      try {
+        useWorld(restoreWorld(msg.data), true);
+      } catch (err) {
+        world?.log(`Spielstand konnte nicht geladen werden: ${(err as Error).message}`);
+      }
+      break;
+    case 'save':
+      sendSave(msg.slot, msg.name);
       break;
     case 'edit':
       if (!world) return;

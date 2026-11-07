@@ -7,6 +7,8 @@ export const MOIST_RANGE = 5;
 export const TREE_GROWN = 3;
 export const BERRIES_PER_BUSH = 3;
 export const WOOD_PER_TREE = 3;
+/** Ab dieser Wassertiefe ertrinken Pflanzen mit der Zeit */
+export const DROWN_DEPTH = 0.8;
 
 const DX = [-1, 1, 0, 0];
 const DY = [0, 0, -1, 1];
@@ -24,6 +26,8 @@ export class Vegetation {
   dry: Uint8Array;
   /** Trockenstress der Pflanze in Sekunden ohne Feuchte */
   stress: Float32Array;
+  /** Sekunden unter tiefem Wasser (Hochwasser) */
+  drown: Float32Array;
   /** Fortschritt zur nächsten Stufe 0..1 */
   growth: Float32Array;
   /** steigt, wenn sich Bäume oder Sträucher ändern */
@@ -44,6 +48,7 @@ export class Vegetation {
     this.moist = new Uint8Array(n);
     this.dry = new Uint8Array(n);
     this.stress = new Float32Array(n);
+    this.drown = new Float32Array(n);
     this.growth = new Float32Array(n);
     this.queue = new Int32Array(n);
     this.dist = new Int16Array(n);
@@ -115,6 +120,40 @@ export class Vegetation {
   }
 
   /**
+   * Hochwasser: Pflanzen unter tiefem Wasser ertrinken nach einer Weile
+   * (Sträucher nach einem Tag, Bäume nach zwei). Gibt die Zahl der
+   * ertrunkenen Pflanzen zurück.
+   */
+  updateFlood(depth: Float32Array, dt: number): number {
+    const { trees, bushes, drown, growth, stress } = this;
+    let died = 0;
+    for (let i = 0; i < trees.length; i++) {
+      const tree = trees[i];
+      const bush = bushes[i];
+      if (tree === 0 && bush === 0) {
+        drown[i] = 0;
+        continue;
+      }
+      if (depth[i] > DROWN_DEPTH) {
+        drown[i] += dt;
+        const limit = tree > 0 ? 2 * DAY : DAY;
+        if (drown[i] >= limit) {
+          trees[i] = 0;
+          bushes[i] = 0;
+          drown[i] = 0;
+          growth[i] = 0;
+          stress[i] = 0;
+          died++;
+        }
+      } else if (drown[i] > 0) {
+        drown[i] = Math.max(0, drown[i] - dt * 2);
+      }
+    }
+    if (died > 0) this.version++;
+    return died;
+  }
+
+  /**
    * Wachstum und Trockenstress für eine Zeitspanne in Sekunden.
    * Gibt zurück, wie viele Pflanzen vertrocknet sind.
    */
@@ -177,6 +216,7 @@ export class Vegetation {
     this.trees[i] = 1;
     this.growth[i] = 0;
     this.stress[i] = 0;
+    this.drown[i] = 0;
     this.version++;
     return true;
   }

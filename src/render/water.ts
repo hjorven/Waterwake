@@ -1,4 +1,12 @@
 import * as THREE from 'three';
+import type { Weather } from '../sim/world';
+
+/** Wasserfarben je Wetter: in der Schmelze führt der Fluss braunes Schmelzwasser */
+const WATER_LOOK: Record<Weather, { shallow: number; deep: number }> = {
+  normal: { shallow: 0x5fb8c9, deep: 0x1f5f8a },
+  schmelze: { shallow: 0x9d8a58, deep: 0x5e5033 },
+  duerre: { shallow: 0x6ec4cc, deep: 0x2a6d92 },
+};
 
 const vertexShader = /* glsl */ `
   attribute float depth;
@@ -44,8 +52,8 @@ const fragmentShader = /* glsl */ `
     vec3 col = mix(uShallow, uDeep, t);
     col += wave * 0.08;
     // Schaum bei starker Strömung
-    float foam = smoothstep(2.0, 3.5, speed) * step(0.6, noise(uv * 9.0 + dir * uTime * 3.0));
-    col = mix(col, vec3(0.95), foam * 0.8);
+    float foam = smoothstep(3.0, 7.0, speed) * step(0.66, noise(uv * 9.0 + dir * uTime * 3.0));
+    col = mix(col, vec3(0.93), foam * 0.45);
     float alpha = mix(0.55, 0.9, t);
     gl_FragColor = vec4(col, alpha);
   }
@@ -71,6 +79,8 @@ export class WaterRenderer {
   private terrain = new Float32Array(0);
   private depth: Float32Array<ArrayBufferLike> = new Float32Array(0);
   private shownDepth = new Float32Array(0);
+  private readonly targetShallow = new THREE.Color(WATER_LOOK.normal.shallow);
+  private readonly targetDeep = new THREE.Color(WATER_LOOK.normal.deep);
 
   constructor(w: number, h: number) {
     this.w = w;
@@ -143,9 +153,18 @@ export class WaterRenderer {
     this.velAttr.needsUpdate = true;
   }
 
+  /** Wasserfarbe je Wetter, wird weich überblendet */
+  setLook(weather: Weather): void {
+    this.targetShallow.setHex(WATER_LOOK[weather].shallow);
+    this.targetDeep.setHex(WATER_LOOK[weather].deep);
+  }
+
   /** Jeden Frame: Höhen weich an die Simulationswerte angleichen */
   update(time: number, dt: number): void {
     this.uniforms.uTime.value = time;
+    const kc = Math.min(1, dt * 0.6);
+    this.uniforms.uShallow.value.lerp(this.targetShallow, kc);
+    this.uniforms.uDeep.value.lerp(this.targetDeep, kc);
     if (this.depth.length === 0 || this.terrain.length === 0) return;
     const { w, h } = this;
     const p = this.pos.array as Float32Array;

@@ -1,8 +1,9 @@
-import { BUILDINGS, DAM_WOOD_PER_LEVEL, GATE_WOOD, type BuildingId } from '../data/buildings';
+import { BUILDINGS, DAM_WOOD_PER_LEVEL, FLOOD_DESTROY_TIME, FLOOD_REPAIR_TIME, GATE_WOOD, type BuildingId } from '../data/buildings';
+import { freeScenario, type Goal, type Scenario } from '../data/maps';
 import { Buildings, type Building } from './buildings';
 import { Citizens, type Env } from './citizens';
 import { Pathfinder } from './pathfinding';
-import { mulberry32 } from './rng';
+import { mulberry32, type Rng } from './rng';
 import { DAY, Seasons, type SeasonInfo } from './seasons';
 import { generateValley, MAX_HEIGHT, type MapData } from './terrain';
 import { Vegetation } from './vegetation';
@@ -10,11 +11,12 @@ import { WaterSim } from './water';
 
 export type Weather = 'normal' | 'schmelze' | 'duerre';
 export type Tool = 'anheben' | 'absenken' | 'damm' | 'deich' | 'schleuse' | 'abreissen';
+export type Outcome = 'won' | 'lost' | null;
 
 export const WEATHER_INFO: Record<Weather, { sourceFactor: number; evaporation: number; label: string }> = {
   normal: { sourceFactor: 1, evaporation: 0.0015, label: 'Normalzeit' },
-  schmelze: { sourceFactor: 3, evaporation: 0.0008, label: 'Schneeschmelze' },
-  duerre: { sourceFactor: 0, evaporation: 0.006, label: 'Dürre' },
+  schmelze: { sourceFactor: 5, evaporation: 0.0008, label: 'Schneeschmelze' },
+  duerre: { sourceFactor: 0, evaporation: 0.004, label: 'Dürre' },
 };
 
 /** Maximale Höhe eines Dammes über dem Boden */
@@ -30,6 +32,7 @@ export const START_OTTERS = 6;
 
 export interface WorldStats {
   population: number;
+  children: number;
   housing: number;
   wood: number;
   berries: number;
@@ -37,6 +40,19 @@ export interface WorldStats {
   water: number;
   waterCap: number;
   season: SeasonInfo;
+  /** mittlere Zufriedenheit 0..1 */
+  mood: number;
+  births: number;
+  deaths: number;
+  lostToFlood: number;
+  outcome: Outcome;
+  goal: Goal | null;
+  scenario: string;
+  scenarioName: string;
+}
+
+function plants(n: number, what: string): string {
+  return n === 1 ? `Eine Pflanze ist ${what}.` : `${n} Pflanzen sind ${what}.`;
 }
 
 export class World implements Env {
@@ -58,6 +74,8 @@ export class World implements Env {
   readonly reserved = new Set<number>();
   /** Wasservorrat in Pumpen und Tanks */
   readonly store = { stored: 0 };
+  readonly seed: number;
+  scenario: Scenario;
   weather: Weather = 'normal';
   /** Jahreszeiten laufen automatisch, false nach manuellem Eingriff */
   autoSeasons = true;
@@ -69,16 +87,24 @@ export class World implements Env {
   terrainVersion = 0;
   /** Meldungen für die Oberfläche, werden vom Worker abgeholt */
   messages: string[] = [];
-  readonly rnd: () => number;
+  /** Spielziel erreicht oder Clan ausgelöscht */
+  outcome: Outcome = null;
+  /** vom Hochwasser zerstörte Gebäude */
+  lostToFlood = 0;
+  readonly rnd: Rng;
   private moistTimer = 0;
   private growTimer = 0;
   private lastDay = 1;
   private witheredToday = 0;
+  private drownedToday = 0;
   private woodWarnAt = -Infinity;
+  private floodWarnAt = -Infinity;
 
-  constructor(map: MapData, seed: number) {
+  constructor(map: MapData, seed: number, scenario?: Scenario) {
     this.w = map.w;
     this.h = map.h;
+    this.seed = seed;
+    this.scenario = scenario ?? freeScenario(seed, map.w, map.h);
     this.rnd = mulberry32(seed ^ 0x51ed);
     this.ground = map.ground.slice();
     this.struct = new Uint8Array(map.w * map.h);
@@ -101,8 +127,12 @@ export class World implements Env {
     this.citizens = new Citizens(this);
   }
 
-  static generate(w: number, h: number, seed: number): World {
-    return new World(generateValley(w, h, seed), seed);
+  static generate(w: number, h: number, seed: number, scenario?: Scenario): World {
+    return new World(generateValley(w, h, seed), seed, scenario);
+  }
+
+  static fromScenario(s: Scenario): World {
+    return World.generate(s.w, s.h, s.seed, s);
   }
 
   /**
@@ -119,7 +149,7 @@ export class World implements Env {
       const sy = (start / this.w) | 0;
       for (let y = sy - 3; y <= sy + 4; y++) for (let x = sx - 3; x <= sx + 4; x++) blocked.add(y * this.w + x);
     }
-    this.veg.seed(this.ground, this.seasons.year, this.rnd, (i) => blocked.has(i));
+    this.veg.seed(this.ground, this.seasons.year, this.rnd, (i) => blocked.has(i) || this.water.depth[i] > 0.2);
     if (start >= 0) {
       const sx = start % this.w;
       const sy = (start / this.w) | 0;
@@ -189,6 +219,19 @@ export class World implements Env {
     return this.buildings.occ[i] < 0;
   }
 
+  /** Wie viele verschiedene Freude-Gebäude diesen Punkt erreichen */
+  joyAt(x: number, y: number): number {
+    const seen = new Set<BuildingId>();
+    for (const b of this.buildings.alive()) {
+      if (!b.built) continue;
+      const def = BUILDINGS[b.def];
+      if (!def.joy || seen.has(b.def)) continue;
+      const c = this.buildings.center(b);
+      if (Math.hypot(c.x - x, c.y - y) <= def.range) seen.add(b.def);
+    }
+    return seen.size;
+  }
+
   private cost(i: number): number {
     if (this.buildings.occ[i] >= 0) return 0;
     const d = this.water.depth[i];
@@ -236,14 +279,18 @@ export class World implements Env {
         change === 'duerre'
           ? `Die Dürre beginnt. Vorhersage: ${info.daysLeft} Tage.`
           : change === 'schmelze'
-            ? 'Schneeschmelze! Der Fluss schwillt an.'
+            ? 'Schneeschmelze! Der Fluss schwillt an, eine Flutwelle kommt.'
             : 'Die Normalzeit kehrt zurück.',
       );
     }
+    if (this.autoSeasons && this.weather === 'schmelze') this.water.sourceFactor = this.seasons.meltFactor();
     this.moistTimer += dt;
     if (this.moistTimer >= 1) {
       this.moistTimer -= 1;
       this.veg.updateMoisture(this.water.depth);
+      this.drownedToday += this.veg.updateFlood(this.water.depth, 1);
+      this.floodCheck(1);
+      this.checkOutcome();
     }
     this.growTimer += dt;
     if (this.growTimer >= 1) {
@@ -254,16 +301,97 @@ export class World implements Env {
     if (day !== this.lastDay) {
       this.lastDay = day;
       if (this.witheredToday > 0) {
-        this.log(`${this.witheredToday} Pflanzen sind vertrocknet.`);
+        this.log(plants(this.witheredToday, 'vertrocknet'));
         this.witheredToday = 0;
       }
+      if (this.drownedToday > 0) {
+        this.log(plants(this.drownedToday, 'im Hochwasser ertrunken'));
+        this.drownedToday = 0;
+      }
+      this.woodWarning();
     }
     this.citizens.step(dt);
+  }
+
+  /** Baustellen warten auf Holz, aber es gibt keines und keinen Holzfäller */
+  private woodWarning(): void {
+    let waiting = false;
+    let woodcutter = false;
+    for (const b of this.buildings.alive()) {
+      if (b.built) {
+        if (b.def === 'holzfaeller') woodcutter = true;
+      } else if (b.woodDelivered < BUILDINGS[b.def].wood) {
+        waiting = true;
+      }
+    }
+    if (!waiting || woodcutter || this.buildings.total('holz') >= 1) return;
+    this.log('Das Holz ist alle, Baustellen warten. Ein Holzfäller schafft Nachschub, Abreißen gibt Holz zurück.');
+  }
+
+  /** Gebäude im tiefen Wasser nehmen Schaden und werden irgendwann weggerissen */
+  private floodCheck(dt: number): void {
+    const depth = this.water.depth;
+    let newly = 0;
+    let anyFlooded = false;
+    for (const b of this.buildings.alive()) {
+      const def = BUILDINGS[b.def];
+      const flooded = this.buildings.maxDepthOn(b, depth) > def.floodDepth;
+      if (flooded !== b.flooded) {
+        b.flooded = flooded;
+        if (flooded) newly++;
+      }
+      if (flooded) {
+        anyFlooded = true;
+        b.damage = Math.min(1, b.damage + dt / FLOOD_DESTROY_TIME);
+        if (b.damage >= 1) this.destroyByFlood(b);
+      } else if (b.damage > 0) {
+        b.damage = Math.max(0, b.damage - dt / FLOOD_REPAIR_TIME);
+        anyFlooded = true;
+      }
+    }
+    // Schäden ändern sich jede Sekunde, die Oberfläche soll sie sehen
+    if (anyFlooded || newly) this.buildings.version++;
+    if (newly > 0 && this.time - this.floodWarnAt > 20) {
+      this.floodWarnAt = this.time;
+      this.log(newly === 1 ? 'Hochwasser! Ein Gebäude steht im Wasser. Deiche bauen!' : `Hochwasser! ${newly} Gebäude stehen im Wasser. Deiche bauen!`);
+    }
+  }
+
+  private destroyByFlood(b: Building): void {
+    const def = BUILDINGS[b.def];
+    this.buildings.remove(b.id);
+    this.citizens.detachBuilding(b.id);
+    for (const i of this.buildings.cells(b)) this.reserved.delete(i);
+    const cap = this.buildings.waterCapacity();
+    if (this.store.stored > cap) this.store.stored = cap;
+    this.lostToFlood++;
+    const lost: string[] = [];
+    if (b.stock.holz > 0) lost.push(`${Math.floor(b.stock.holz)} Holz`);
+    if (b.stock.beeren > 0) lost.push(`${Math.floor(b.stock.beeren)} Beeren`);
+    this.log(`${def.name} wurde vom Hochwasser weggerissen${lost.length ? `, samt ${lost.join(' und ')}` : ''}.`);
+  }
+
+  /** Spielziel und Untergang prüfen */
+  private checkOutcome(): void {
+    const pop = this.citizens.count();
+    if (pop === 0) {
+      if (this.outcome !== 'lost') {
+        this.outcome = 'lost';
+        this.log('Der Otterclan ist ausgelöscht.');
+      }
+      return;
+    }
+    const goal = this.scenario.goal;
+    if (this.outcome === null && goal && pop >= goal.population && this.seasons.year >= goal.year) {
+      this.outcome = 'won';
+      this.log(`Ziel erreicht: ${pop} Otter im Jahr ${this.seasons.year}. Der Clan ist im Tal zuhause.`);
+    }
   }
 
   stats(): WorldStats {
     return {
       population: this.citizens.count(),
+      children: this.citizens.children(),
       housing: this.buildings.housing(),
       wood: this.buildings.total('holz'),
       berries: this.buildings.total('beeren'),
@@ -271,12 +399,21 @@ export class World implements Env {
       water: this.store.stored,
       waterCap: this.buildings.waterCapacity(),
       season: this.seasons.info(),
+      mood: this.citizens.mood(),
+      births: this.citizens.births,
+      deaths: this.citizens.deaths,
+      lostToFlood: this.lostToFlood,
+      outcome: this.outcome,
+      goal: this.scenario.goal,
+      scenario: this.scenario.id,
+      scenarioName: this.scenario.name,
     };
   }
 
   // --- Gelände und Wasserbau ------------------------------------------------------
 
-  private syncTerrain(): void {
+  /** Wasser-Gelände aus Boden und Bauwerken neu berechnen */
+  syncTerrain(): void {
     const t = this.water.terrain;
     for (let i = 0; i < t.length; i++) t[i] = this.ground[i] + this.struct[i];
     this.terrainVersion++;
@@ -399,10 +536,7 @@ export class World implements Env {
     if (id < 0) return false;
     const b = this.buildings.remove(id);
     if (!b) return false;
-    for (const c of this.citizens.list) {
-      if (c.workplace === id) c.workplace = -1;
-      if (c.home === id) c.home = -1;
-    }
+    this.citizens.detachBuilding(id);
     const def = BUILDINGS[b.def];
     const refund = Math.floor(b.woodDelivered / 2) + b.stock.holz;
     if (refund > 0) this.buildings.putGood('holz', refund, b.x, b.y);

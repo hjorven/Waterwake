@@ -8,13 +8,14 @@ export interface HudCallbacks {
   onMode(mode: Mode): void;
   onSpeed(speed: number): void;
   onDemolish(buildingId: number): void;
+  onMenu(): void;
 }
 
 type Tab = 'gebaeude' | 'wasserbau' | 'gelaende';
 
 const SVG_OPEN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
 
-const ICONS: Record<string, string> = {
+export const ICONS: Record<string, string> = {
   huette: '<path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>',
   pumpe: '<circle cx="9" cy="12" r="5"/><path d="M9 7v10M4 12h10"/><path d="M14 12h6v-4"/>',
   tank: '<rect x="5" y="4" width="14" height="16" rx="3"/><path d="M5 9h14M5 15h14"/>',
@@ -22,6 +23,8 @@ const ICONS: Record<string, string> = {
   holzfaeller: '<path d="M13 3l8 8-4 4-8-8z"/><path d="M11 11l-8 8 2 2 8-8"/>',
   foerster: '<path d="M12 21v-9"/><path d="M12 12c-4 0-6-3-6-6 3 0 6 2 6 6z"/><path d="M12 12c4 0 6-3 6-6-3 0-6 2-6 6z"/>',
   lager: '<path d="M3 9l9-5 9 5v11H3z"/><path d="M3 9h18M9 20v-7h6v7"/>',
+  badesteg: '<path d="M3 10h13"/><path d="M5 10v9M9 10v9M13 10v9"/><path d="M16 10v6"/><path d="M3 20c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/>',
+  musikplatz: '<ellipse cx="12" cy="8" rx="7" ry="3"/><path d="M5 8v8c0 1.7 3.1 3 7 3s7-1.3 7-3V8"/><path d="M8 3l2 4M16 3l-2 4"/>',
   damm: '<path d="M3 20h18M4 20V9h16v11M4 14h16M9 9v5M14 14v6"/>',
   deich: '<path d="M3 20h18M4 20c2-8 14-8 16 0"/>',
   schleuse: '<path d="M5 4v16M19 4v16M8 8h8v8H8z"/><path d="M12 8v8"/>',
@@ -30,6 +33,8 @@ const ICONS: Record<string, string> = {
   absenken: '<path d="M3 20h18"/><path d="M12 4v11"/><path d="M7 10l5 5 5-5"/>',
   select: '<path d="M5 3l14 9-6 1-3 6z"/>',
   otter: '<circle cx="12" cy="12" r="7"/><circle cx="9.5" cy="11" r="1" fill="currentColor"/><circle cx="14.5" cy="11" r="1" fill="currentColor"/><path d="M10 15c1 1 3 1 4 0"/><path d="M6 7l2 2M18 7l-2 2"/>',
+  mood: '<circle cx="12" cy="12" r="9"/><circle cx="9" cy="10" r="1" fill="currentColor"/><circle cx="15" cy="10" r="1" fill="currentColor"/><path d="M8 14c1.5 2 6.5 2 8 0"/>',
+  moodBad: '<circle cx="12" cy="12" r="9"/><circle cx="9" cy="10" r="1" fill="currentColor"/><circle cx="15" cy="10" r="1" fill="currentColor"/><path d="M8 16c1.5-2 6.5-2 8 0"/>',
   holz: '<rect x="3" y="9" width="18" height="6" rx="3"/><circle cx="6" cy="12" r="1.5"/>',
   beeren: '<circle cx="9" cy="14" r="3"/><circle cx="15" cy="14" r="3"/><circle cx="12" cy="9" r="3"/><path d="M12 6V3"/>',
   wasser: '<path d="M12 3s6 7 6 11a6 6 0 0 1-12 0c0-4 6-11 6-11z"/>',
@@ -40,9 +45,16 @@ const ICONS: Record<string, string> = {
   play: '<path d="M7 4l12 8-12 8z"/>',
   schnell: '<path d="M4 4l8 8-8 8M12 4l8 8-8 8"/>',
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
+  menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
+  ziel: '<path d="M5 21V4"/><path d="M5 4h12l-3 4 3 4H5"/>',
+  save: '<path d="M5 3h11l3 3v15H5z"/><path d="M8 3v5h7V3"/><path d="M8 21v-7h8v7"/>',
+  cloud: '<path d="M7 18a4 4 0 0 1-.5-8 6 6 0 0 1 11.5 1.5A3.5 3.5 0 0 1 17.5 18z"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/>',
+  flood: '<path d="M3 8c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/><path d="M3 13c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/><path d="M3 18c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/>',
+  trophy: '<path d="M8 4h8v5a4 4 0 0 1-8 0z"/><path d="M8 6H5v2a3 3 0 0 0 3 3M16 6h3v2a3 3 0 0 1-3 3"/><path d="M12 13v4M8 21h8M10 17h4v4"/>',
 };
 
-function icon(name: string): string {
+export function icon(name: string): string {
   return `${SVG_OPEN}${ICONS[name] ?? ''}</svg>`;
 }
 
@@ -69,7 +81,7 @@ const WATER_ITEMS: Item[] = [
     label: 'Deich',
     icon: 'deich',
     cost: 'Erde, kostenlos',
-    desc: `Aufgeschütteter Erdwall bis ${MAX_DIKE} Stufen. Hohes Wasser läuft darüber.`,
+    desc: `Aufgeschütteter Erdwall bis ${MAX_DIKE} Stufen. Schützt vor Hochwasser, sehr hohes Wasser läuft darüber.`,
     mode: { kind: 'tool', tool: 'deich' },
   },
   {
@@ -139,6 +151,13 @@ function buildItems(): Item[] {
 
 const WEATHER_ICON: Record<Weather, string> = { normal: 'normal', schmelze: 'schmelze', duerre: 'duerre' };
 
+export function moodLabel(mood: number): string {
+  if (mood >= 0.75) return 'glücklich';
+  if (mood >= 0.55) return 'zufrieden';
+  if (mood >= 0.4) return 'mäßig';
+  return 'unglücklich';
+}
+
 export class Hud {
   readonly root: HTMLElement;
   mode: Mode = { kind: 'select' };
@@ -153,6 +172,7 @@ export class Hud {
   private brushButtons: HTMLButtonElement[] = [];
   private speedButtons: HTMLButtonElement[] = [];
   private season: HTMLElement;
+  private goal: HTMLElement;
   private res: HTMLElement;
   private messages: HTMLElement;
   private panel: HTMLElement;
@@ -161,6 +181,7 @@ export class Hud {
   private panelBuilding: BuildingSnap | null = null;
   private wood = 0;
   private cards = new Map<string, HTMLElement>();
+  private lastStatsKey = '';
 
   constructor(parent: HTMLElement, cb: HudCallbacks) {
     this.cb = cb;
@@ -170,8 +191,10 @@ export class Hud {
       <header class="topbar">
         <div class="brand">Waterwake</div>
         <div class="season"></div>
+        <div class="goal"></div>
         <div class="res"></div>
         <div class="speed"></div>
+        <button class="icon-btn menu-btn" title="Menü, Speichern, Einstellungen (Esc)">${icon('menu')}</button>
       </header>
       <div class="messages"></div>
       <aside class="panel hidden">
@@ -189,6 +212,7 @@ export class Hud {
       </nav>`;
     parent.appendChild(this.root);
     this.season = this.root.querySelector('.season')!;
+    this.goal = this.root.querySelector('.goal')!;
     this.res = this.root.querySelector('.res')!;
     this.messages = this.root.querySelector('.messages')!;
     this.panel = this.root.querySelector('.panel')!;
@@ -201,6 +225,7 @@ export class Hud {
     this.heightValue = this.root.querySelector('.height-value')!;
 
     this.root.querySelector('.panel .close')!.addEventListener('click', () => this.showBuilding(null));
+    this.root.querySelector('.menu-btn')!.addEventListener('click', () => cb.onMenu());
     this.root.querySelector('.opt-height .minus')!.addEventListener('click', () => this.setDamHeight(this.damHeight - 1));
     this.root.querySelector('.opt-height .plus')!.addEventListener('click', () => this.setDamHeight(this.damHeight + 1));
     const brushBox = this.root.querySelector('.opt-brush')!;
@@ -248,6 +273,19 @@ export class Hud {
     this.showTab('gebaeude');
     this.setMode({ kind: 'select' }, false);
     this.updateOptions();
+  }
+
+  /** Alles ausblenden oder zeigen (Startmenü) */
+  setVisible(v: boolean): void {
+    this.root.classList.toggle('hidden', !v);
+  }
+
+  /** Neues Spiel: Meldungen und Tafel leeren */
+  reset(): void {
+    this.messages.innerHTML = '';
+    this.showBuilding(null);
+    this.setMode({ kind: 'select' });
+    this.lastStatsKey = '';
   }
 
   // --- Modus und Werkzeuge ---------------------------------------------------
@@ -339,33 +377,54 @@ export class Hud {
 
   setStats(s: SimStats): void {
     this.wood = s.wood;
+    this.setSpeed(s.speed);
+    this.refreshCards();
     const info = s.season;
+    // Die Leiste nur neu bauen, wenn sich sichtbare Werte geändert haben
+    const key = [
+      info.day, info.year, s.weather, info.daysLeft, info.next, info.nextMin, info.nextMax,
+      s.population, s.children, s.housing, Math.floor(s.wood), s.storageCap, Math.floor(s.berries), Math.floor(s.water), s.waterCap,
+      Math.round(s.mood * 20), s.outcome, s.scenario,
+    ].join('|');
+    if (key === this.lastStatsKey) return;
+    this.lastStatsKey = key;
+
     const phase = WEATHER_INFO[s.weather].label;
     const nextLabel = WEATHER_INFO[info.next].label;
-    const forecast =
-      info.next === 'duerre'
-        ? `Dürre in ${info.daysLeft} Tagen, ${info.nextMin} bis ${info.nextMax} Tage lang`
-        : `Dann ${nextLabel}, ${info.nextMin} bis ${info.nextMax} Tage`;
+    const forecast = `Dann ${nextLabel}, ${info.nextMin} bis ${info.nextMax} Tage`;
     this.season.innerHTML = `<span class="season-icon ${s.weather}">${icon(WEATHER_ICON[s.weather])}</span>
       <div class="season-text"><b>Tag ${info.day} · Jahr ${info.year}</b><small>${phase}, noch ${info.daysLeft} ${info.daysLeft === 1 ? 'Tag' : 'Tage'}</small><small class="forecast">${forecast}</small></div>`;
     this.season.className = `season ${s.weather}`;
 
-    const chip = (ic: string, title: string, value: string, warn: boolean) =>
-      `<div class="chip${warn ? ' warn' : ''}" title="${title}">${icon(ic)}<b>${value}</b></div>`;
+    if (s.goal) {
+      const done = s.outcome === 'won';
+      const popOk = s.population >= s.goal.population;
+      const yearOk = info.year >= s.goal.year;
+      this.goal.innerHTML = `${icon(done ? 'trophy' : 'ziel')}<div class="goal-text"><b>${done ? 'Ziel erreicht' : 'Ziel'}</b><small><span class="${popOk ? 'ok' : ''}">${s.population}/${s.goal.population} Otter</span> · <span class="${yearOk ? 'ok' : ''}">Jahr ${info.year}/${s.goal.year}</span></small></div>`;
+      this.goal.title = `${s.scenarioName}: ${s.goal.population} Otter und das Jahr ${s.goal.year} erreichen`;
+    } else {
+      this.goal.innerHTML = `${icon('ziel')}<div class="goal-text"><b>Freies Spiel</b><small>kein Ziel</small></div>`;
+      this.goal.title = s.scenarioName;
+    }
+    this.goal.classList.toggle('done', s.outcome === 'won');
+
+    const chip = (ic: string, title: string, value: string, cls: string) =>
+      `<div class="chip ${cls}" title="${title}">${icon(ic)}<b>${value}</b></div>`;
+    const moodCls = s.mood < 0.4 ? 'warn' : s.mood >= 0.75 ? 'good' : '';
     this.res.innerHTML =
-      chip('otter', 'Bewohner / Betten', `${s.population}<span>/${s.housing}</span>`, s.population > s.housing) +
-      chip('holz', 'Holz im Lager / Platz', `${Math.floor(s.wood)}<span>/${s.storageCap}</span>`, s.wood < 5) +
-      chip('beeren', 'Beeren im Lager / Platz', `${Math.floor(s.berries)}<span>/${s.storageCap}</span>`, s.berries < s.population) +
-      chip('wasser', 'Wasser im Speicher / Speicherplatz', `${Math.floor(s.water)}<span>/${s.waterCap}</span>`, s.waterCap > 0 && s.water < s.population);
-    this.setSpeed(s.speed);
-    this.refreshCards();
+      chip('otter', `Bewohner / Betten${s.children ? `, davon ${s.children} Junge` : ''}`, `${s.population}<span>/${s.housing}</span>`, s.population > s.housing ? 'warn' : '') +
+      chip(s.mood < 0.4 ? 'moodBad' : 'mood', `Zufriedenheit: ${moodLabel(s.mood)}. Hütten, Essen, Wasser, Badesteg und Musikplatz machen zufrieden.`, `${Math.round(s.mood * 100)}<span>%</span>`, moodCls) +
+      chip('holz', 'Holz im Lager / Platz', `${Math.floor(s.wood)}<span>/${s.storageCap}</span>`, s.wood < 5 ? 'warn' : '') +
+      chip('beeren', 'Beeren im Lager / Platz', `${Math.floor(s.berries)}<span>/${s.storageCap}</span>`, s.berries < s.population ? 'warn' : '') +
+      chip('wasser', 'Wasser im Speicher / Speicherplatz', `${Math.floor(s.water)}<span>/${s.waterCap}</span>`, s.waterCap > 0 && s.water < s.population ? 'warn' : '');
   }
 
   pushMessages(list: string[]): void {
     for (const text of list) {
       const el = document.createElement('div');
-      const bad = /verdurstet|verhungert|Dürre|Nicht genug|Kein |vertrocknet|aufgebraucht/.test(text);
-      el.className = `msg${bad ? ' bad' : ''}`;
+      const bad = /verdurstet|verhungert|Dürre|Nicht genug|Kein |vertrocknet|aufgebraucht|Hochwasser|weggerissen|ertrunken|gestorben|ausgelöscht/.test(text);
+      const good = /geboren|Ziel erreicht|fertig\./.test(text);
+      el.className = `msg${bad ? ' bad' : good ? ' good' : ''}`;
       el.textContent = text;
       this.messages.appendChild(el);
       while (this.messages.children.length > 5) this.messages.firstElementChild!.remove();
@@ -383,6 +442,8 @@ export class Hud {
     const def = BUILDINGS[b.def];
     this.panelTitle.textContent = def.name;
     const rows: string[] = [];
+    if (b.flooded) rows.push(`<div class="row bad"><span>Hochwasser</span><b>Schaden ${Math.round(b.damage * 100)} %</b></div>`);
+    else if (b.damage > 0.02) rows.push(`<div class="row"><span>Schaden heilt</span><b>${Math.round(b.damage * 100)} %</b></div>`);
     if (!b.built) {
       rows.push(`<div class="row"><span>Baustelle</span><b>${Math.round(b.progress * 100)} %</b></div>`);
       rows.push(`<div class="row"><span>Holz geliefert</span><b>${b.woodDelivered} / ${def.wood}</b></div>`);
@@ -394,7 +455,9 @@ export class Hud {
         rows.push(`<div class="row"><span>Beeren</span><b>${Math.floor(b.berries)} / ${def.storage}</b></div>`);
       }
       if (def.waterCap) rows.push(`<div class="row"><span>Speicherplatz</span><b>${def.waterCap} Wasser</b></div>`);
-      if (def.range) rows.push(`<div class="row"><span>Umkreis</span><b>${def.range} Felder</b></div>`);
+      if (def.range) rows.push(`<div class="row"><span>${def.joy ? 'Wirkungskreis' : 'Umkreis'}</span><b>${def.range} Felder</b></div>`);
+      if (def.floodDepth >= 1.5) rows.push(`<div class="row"><span>Hochwasser</span><b>hält stand</b></div>`);
+      else if (def.floodDepth >= 0.9) rows.push(`<div class="row"><span>Hochwasser</span><b>steht auf Pfählen</b></div>`);
     }
     this.panelBody.innerHTML = `<p class="desc">${def.desc}</p>${rows.join('')}<button class="danger demolish">Abreißen</button>`;
     this.panelBody.querySelector('.demolish')!.addEventListener('click', () => {

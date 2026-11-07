@@ -83,6 +83,8 @@ interface CitizenTrack {
   heading: number;
   state: number;
   carry: number;
+  /** 1 erwachsen, kleiner für Junge */
+  scale: number;
 }
 
 /**
@@ -219,7 +221,7 @@ export class InstanceRenderer {
       seen.add(id);
       let t = this.tracks.get(id);
       if (!t) {
-        t = { id, px: data[o + 1], py: data[o + 2], pz: data[o + 3], x: 0, y: 0, z: 0, heading: 0, state: 0, carry: 0 };
+        t = { id, px: data[o + 1], py: data[o + 2], pz: data[o + 3], x: 0, y: 0, z: 0, heading: 0, state: 0, carry: 0, scale: 1 };
         this.tracks.set(id, t);
       } else {
         t.px = t.x;
@@ -232,6 +234,7 @@ export class InstanceRenderer {
       t.heading = data[o + 4];
       t.state = data[o + 5];
       t.carry = data[o + 6];
+      t.scale = data[o + 7] || 1;
     }
     for (const id of [...this.tracks.keys()]) if (!seen.has(id)) this.tracks.delete(id);
     this.snapInterval = Math.max(0.02, Math.min(0.3, now - this.snapTime));
@@ -255,9 +258,10 @@ export class InstanceRenderer {
       const walking = t.state === 1;
       const bob = walking ? Math.abs(Math.sin(now * 12 + t.id)) * 0.06 : 0;
       const working = t.state === 2 ? Math.sin(now * 8 + t.id) * 0.08 : 0;
-      setInstance(this.otters.mesh, i, x, z + bob, y, t.heading + working, 1);
-      if (t.carry === 1) setInstance(this.logs.mesh, nl++, x, z + bob, y, t.heading, 1);
-      else if (t.carry === 2) setInstance(this.baskets.mesh, nb++, x, z + bob, y, t.heading, 1);
+      const hop = t.scale < 1 && walking ? Math.abs(Math.sin(now * 14 + t.id)) * 0.1 : 0;
+      setInstance(this.otters.mesh, i, x, z + bob + hop, y, t.heading + working, t.scale);
+      if (t.carry === 1) setInstance(this.logs.mesh, nl++, x, z + bob, y, t.heading, t.scale);
+      else if (t.carry === 2) setInstance(this.baskets.mesh, nb++, x, z + bob, y, t.heading, t.scale);
       i++;
     }
     this.otters.mesh.count = i;

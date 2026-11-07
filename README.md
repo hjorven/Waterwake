@@ -14,6 +14,14 @@ Spielen: https://hjorven.github.io/Waterwake/
   Lager, Wohnhütte, Pumpe, Wassertank, Beerensammler, Holzfäller, Förster,
   Bäume und Beerensträucher mit Bodenfeuchte, Jahreslauf mit angekündigter
   Dürre und Schneeschmelze, neue Oberfläche.
+- **M3 Hochwasser und Clan**: Die Flutwelle der Schneeschmelze wird jedes Jahr
+  höher, überflutete Gebäude nehmen Schaden und werden weggerissen, Pflanzen
+  ertrinken. Otter haben eine Stimmung (Hütte, Versorgung, Badesteg,
+  Musikplatz, Trauer), bekommen Junge und sterben im Alter. Kampagnenkarte
+  Ottertal mit Ziel, Startmenü, Einleitung, Endbildschirm. Spielstände lokal
+  (vier Plätze, Autosave) und in der Cloud (Supabase, anonyme Anmeldung).
+  Artstil: Tilt-Shift, Farbstimmung je Jahreszeit, braunes Schmelzwasser,
+  Hitzeflimmern in der Dürre.
 
 ## Steuerung
 
@@ -25,9 +33,19 @@ Spielen: https://hjorven.github.io/Waterwake/
 | Mausrad, Kneifen | Zoomen |
 | W A S D, Pfeile, Q E | Kamera bewegen und drehen |
 | Leertaste, 1 2 3 | Pause, Spielgeschwindigkeit |
-| Esc | Werkzeug ablegen |
+| Esc | Werkzeug ablegen, Menü öffnen und schließen |
 
-URL-Parameter: `?seed=12` wählt eine andere Karte, `?frei` macht Wasserbau kostenlos.
+URL-Parameter: `?karte=ottertal` startet die Kampagne direkt, `?seed=12`
+startet ein freies Spiel auf einer anderen Karte, `?frei` macht Wasserbau
+kostenlos, `?flach` schaltet den Tilt-Shift-Effekt ab.
+
+## Spielstände in der Cloud
+
+Die Cloud-Spielstände liegen in Supabase in der Tabelle `ww_saves`, die
+Migration steht in `supabase/migrations/`. Die Oberfläche meldet sich anonym
+an, jeder Browser sieht nur seine eigenen Spielstände. Projekt-URL und
+Schlüssel lassen sich über `VITE_SUPABASE_URL` und `VITE_SUPABASE_KEY`
+setzen, sonst gelten die Werte aus `src/online/cloud.ts`.
 
 ## Entwicklung
 
@@ -43,5 +61,6 @@ npm test
 npm run build
 ```
 
-Aufbau: `src/sim` (Simulation, läuft im Worker), `src/render` (Three.js),
-`src/ui` (Oberfläche), `src/data` (Gebäudedaten).
+Aufbau: `src/sim` (Simulation, läuft im Worker), `src/render` (Three.js und
+Nachbearbeitung), `src/ui` (Oberfläche und Menü), `src/data` (Gebäude und
+Karten), `src/online` (Spielstände lokal und in der Cloud).
