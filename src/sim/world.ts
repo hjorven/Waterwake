@@ -14,7 +14,7 @@ export type Tool = 'anheben' | 'absenken' | 'damm' | 'deich' | 'schleuse' | 'abr
 export const WEATHER_INFO: Record<Weather, { sourceFactor: number; evaporation: number; label: string }> = {
   normal: { sourceFactor: 1, evaporation: 0.0015, label: 'Normalzeit' },
   schmelze: { sourceFactor: 3, evaporation: 0.0008, label: 'Schneeschmelze' },
-  duerre: { sourceFactor: 0, evaporation: 0.012, label: 'Dürre' },
+  duerre: { sourceFactor: 0, evaporation: 0.006, label: 'Dürre' },
 };
 
 /** Maximale Höhe eines Dammes über dem Boden */
