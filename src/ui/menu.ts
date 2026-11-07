@@ -1,5 +1,6 @@
+import { DAILY_ID, dailyDateText, dailyKey } from '../data/daily';
 import { CAMPAIGN, SCENARIOS, goalText, isUnlocked, nextScenario, type Scenario } from '../data/maps';
-import { CLOUD_SLOTS } from '../online/cloud';
+import { CLOUD_SLOTS, type DailyBoard, type DailyResult } from '../online/cloud';
 import { LOCAL_SLOTS, formatSavedAt, slotLabel, type SaveEntry, type Settings } from '../online/saves';
 import type { SimStats } from '../sim/protocol';
 import { icon } from './hud';
@@ -23,14 +24,42 @@ export interface MenuCallbacks {
   onSettings(s: Settings): void;
   /** Ids der gewonnenen Kampagnenkarten */
   campaignWon(): string[];
+  /** Spielername für die Bestenliste */
+  getName(): string;
+  setName(name: string): void;
+  /** Bestenliste eines Tages */
+  dailyBoard(key: string): Promise<DailyBoard>;
+  /** Wertung des laufenden Spiels, wenn es auf der Tageskarte läuft */
+  dailyScore(): DailyScore | null;
+  /** Wertung des laufenden Spiels abgeben */
+  onDailySubmit(name: string): Promise<DailyResult>;
 }
 
-export type MenuView = 'start' | 'menu' | 'campaign' | 'saves' | 'settings' | 'intro' | 'end' | null;
+/** Stand des laufenden Spiels auf der Tageskarte */
+export interface DailyScore {
+  key: string;
+  score: number;
+  days: number;
+  population: number;
+  /** diese Wertung (oder eine bessere) steht schon in der Bestenliste */
+  submitted: boolean;
+}
+
+export type MenuView = 'start' | 'menu' | 'campaign' | 'daily' | 'saves' | 'settings' | 'intro' | 'end' | null;
 
 function metaText(e: SaveEntry | undefined): string {
   if (!e) return 'leer';
   const m = e.meta;
   return `${m.scenarioName} · Tag ${m.day}, Jahr ${m.year} · ${m.population} Otter · ${formatSavedAt(m.savedAt)}`;
+}
+
+/** Fremde Texte (Spielernamen, Fehlermeldungen) sicher ins HTML setzen */
+function esc(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c);
+}
+
+function nameInput(value: string): string {
+  return `<label>Name <input class="player-name" type="text" maxlength="20" placeholder="Dein Name" value="${esc(value)}"></label>`;
 }
 
 /**
@@ -50,6 +79,13 @@ export class Menu {
   private seed = Math.floor(Math.random() * 9000) + 100;
   /** Stand beim letzten Ende-Dialog, für "Nochmal versuchen" */
   private lastStats: SimStats | null = null;
+  /** Stand beim letzten Spielmenü, zum Neuaufbau nach dem Abgeben einer Wertung */
+  private lastMenuStats: SimStats | null = null;
+  private board: DailyBoard | null = null;
+  private boardKey = '';
+  private boardError = '';
+  private boardBusy = false;
+  private dailyBusy = false;
 
   constructor(parent: HTMLElement, cb: MenuCallbacks) {
     this.cb = cb;
@@ -107,6 +143,7 @@ export class Menu {
       <div class="start-title"><span class="logo">Waterwake</span><span class="tagline">Ein Otterclan am wilden Fluss</span></div>
       <div class="start-cards">
         <button class="start-card" data-act="campaign">${icon('trophy')}<b>Kampagne</b><small>${campaignText}</small></button>
+        <button class="start-card" data-act="daily">${icon('calendar')}<b>Tageskarte</b><small>Karte vom ${dailyDateText(dailyKey())}, für alle gleich. Wertung in der Bestenliste.</small></button>
         ${auto ? `<button class="start-card" data-act="continue">${icon('play')}<b>Weiterspielen</b><small>${metaText(auto)}</small></button>` : ''}
         <button class="start-card" data-act="saves">${icon('save')}<b>Spielstände</b><small>Laden aus dem Browser oder der Cloud.</small></button>
         <button class="start-card" data-act="settings">${icon('settings')}<b>Einstellungen</b><small>Miniatur-Unschärfe, Schatten.</small></button>
@@ -128,12 +165,15 @@ export class Menu {
   showMenu(stats: SimStats | null): void {
     this.view = 'menu';
     this.back = 'menu';
+    this.lastMenuStats = stats;
+    const daily = stats && stats.scenario === DAILY_ID ? this.cb.dailyScore() : null;
     const head = stats
-      ? `<p class="note">${stats.scenarioName} · Tag ${stats.season.day}, Jahr ${stats.season.year} · ${stats.population} Otter · Ziel: ${goalText(stats.goal)}</p>`
+      ? `<p class="note">${stats.scenarioName} · Tag ${stats.season.day}, Jahr ${stats.season.year} · ${stats.population} Otter · ${daily ? `Wertung: ${daily.score} Punkte` : `Ziel: ${goalText(stats.goal)}`}</p>`
       : '';
+    const dailyPart = daily ? (daily.submitted ? `<p class="note">Die Wertung von ${daily.score} Punkten steht in der Bestenliste.</p>` : this.dailyRow(daily)) : '';
     this.dialog(
       'Menü',
-      `${head}
+      `${head}${dailyPart}
       <div class="menu-list">
         <button class="btn" data-act="resume">${icon('play')}Weiterspielen</button>
         <button class="btn secondary" data-act="saves">${icon('save')}Spielstände speichern und laden</button>
@@ -162,6 +202,123 @@ export class Menu {
       ${rows.join('')}
       <div class="btn-row"><button class="btn secondary" data-act="back">Zurück</button></div>`,
     );
+  }
+
+  showDaily(): void {
+    this.view = 'daily';
+    this.back = 'start';
+    const key = dailyKey();
+    const cur = this.cb.dailyScore();
+    const running = cur !== null && cur.key === key;
+    const scorePart = cur
+      ? cur.submitted
+        ? `<p class="note">Deine Wertung von ${cur.score} Punkten steht in der Bestenliste.</p>`
+        : this.dailyRow(cur)
+      : `<div class="daily-row">${nameInput(this.cb.getName())}</div>`;
+    this.dialog(
+      'Tageskarte',
+      `<p class="note">Jeden Tag ein neues Tal, für alle Spieler dasselbe. Es zählt, wie lange der Clan durchhält und wie groß er wird: 10 Punkte je überstandenem Tag und 5 je lebendem Otter. Nur die beste Wertung des Tages zählt.</p>
+      <div class="slot">
+        <div class="slot-info"><b>Karte vom ${dailyDateText(key)}</b><small>${running && cur ? `${cur.population > 0 ? 'Läuft gerade' : 'Vorbei'}: ${cur.score} Punkte nach ${cur.days} ${cur.days === 1 ? 'Tag' : 'Tagen'}.` : 'Ein Tal mit zufälliger Form, der Jahreslauf wie im Ottertal.'}</small></div>
+        <button class="btn" data-act="daily-play">${icon('play')}${running ? 'Neu starten' : 'Spielen'}</button>
+      </div>
+      ${scorePart}
+      <div class="section-title">${icon('trophy')}Bestenliste</div>
+      <div class="board"></div>
+      <div class="btn-row"><button class="btn secondary" data-act="back">Zurück</button></div>`,
+    );
+    this.loadBoard(key);
+    this.renderBoard();
+  }
+
+  /** Namensfeld und Knopf zum Abgeben der Wertung */
+  private dailyRow(d: DailyScore): string {
+    return `<div class="daily-row">
+      ${nameInput(this.cb.getName())}
+      <button class="btn" data-act="daily-submit" ${this.dailyBusy ? 'disabled' : ''}>${icon('trophy')}Wertung abgeben: ${d.score} Punkte</button>
+    </div>`;
+  }
+
+  private loadBoard(key: string): void {
+    if ((this.board && this.boardKey === key) || this.boardBusy) return;
+    this.boardBusy = true;
+    this.boardError = '';
+    this.cb
+      .dailyBoard(key)
+      .then((b) => {
+        this.board = b;
+        this.boardKey = key;
+      })
+      .catch((err: Error) => {
+        this.boardError = err.message;
+      })
+      .finally(() => {
+        this.boardBusy = false;
+        this.renderBoard();
+      });
+  }
+
+  private renderBoard(): void {
+    const el = this.root.querySelector('.board');
+    if (el && this.view === 'daily') el.innerHTML = this.boardHtml();
+  }
+
+  private boardHtml(): string {
+    if (this.boardBusy) return '<p class="note">Bestenliste wird geladen …</p>';
+    if (this.boardError) return `<p class="note">Bestenliste nicht erreichbar: ${esc(this.boardError)}</p>`;
+    const b = this.board;
+    if (!b) return '';
+    if (!b.rows.length) return '<p class="note">Heute hat noch niemand eine Wertung abgegeben.</p>';
+    const rows = b.rows.map(
+      (r, i) =>
+        `<div class="board-row${r.me ? ' me' : ''}"><span class="rank">${i + 1}.</span><span class="name">${esc(r.name)}</span><small>${r.days} ${r.days === 1 ? 'Tag' : 'Tage'} · ${r.population} Otter</small><span class="pts">${r.score}</span></div>`,
+    );
+    const mine = b.me
+      ? `<p class="note">Dein Platz: ${b.me.rank} von ${b.total} mit ${b.me.score} Punkten.</p>`
+      : `<p class="note">${b.total} ${b.total === 1 ? 'Spieler hat' : 'Spieler haben'} heute eine Wertung abgegeben.</p>`;
+    return rows.join('') + mine;
+  }
+
+  /** Namensfeld übernehmen, falls eins zu sehen ist */
+  private saveNameInput(): void {
+    const input = this.root.querySelector('.player-name') as HTMLInputElement | null;
+    if (input) this.cb.setName(input.value);
+  }
+
+  private submitDaily(): void {
+    if (this.dailyBusy) return;
+    const input = this.root.querySelector('.player-name') as HTMLInputElement | null;
+    const name = (input ? input.value : this.cb.getName()).trim().slice(0, 20);
+    if (!name) {
+      this.toast('Bitte zuerst einen Namen eingeben.', true);
+      input?.focus();
+      return;
+    }
+    this.cb.setName(name);
+    this.dailyBusy = true;
+    for (const b of this.root.querySelectorAll<HTMLButtonElement>('[data-act="daily-submit"]')) b.disabled = true;
+    this.cb
+      .onDailySubmit(name)
+      .then((r) => {
+        this.toast(
+          r.improved
+            ? `Wertung abgegeben: ${r.score} Punkte, Platz ${r.rank} von ${r.total}.`
+            : `Deine beste Wertung heute bleibt ${r.score} Punkte, Platz ${r.rank} von ${r.total}.`,
+        );
+        this.board = null;
+      })
+      .catch((err: Error) => this.toast(`Bestenliste: ${err.message}`, true))
+      .finally(() => {
+        this.dailyBusy = false;
+        this.refreshDaily();
+      });
+  }
+
+  /** Die Ansicht mit der Wertung neu aufbauen */
+  private refreshDaily(): void {
+    if (this.view === 'daily') this.showDaily();
+    else if (this.view === 'end' && this.lastStats) this.showEnd(this.lastStats);
+    else if (this.view === 'menu') this.showMenu(this.lastMenuStats);
   }
 
   showSaves(): void {
@@ -233,6 +390,10 @@ export class Menu {
     const won = stats.outcome === 'won';
     const next = won ? nextScenario(stats.scenario) : null;
     const goal = stats.goal;
+    const daily = stats.scenario === DAILY_ID ? this.cb.dailyScore() : null;
+    const lostText = daily
+      ? `Der letzte Otter ist gestorben. ${daily.days} ${daily.days === 1 ? 'Tag' : 'Tage'} überstanden, das sind ${daily.score} Punkte.${daily.submitted ? ' Die Wertung steht in der Bestenliste.' : ' Gib die Wertung ab, dann zählt sie in der Bestenliste.'}`
+      : 'Der letzte Otter ist gestorben. Beim nächsten Mal: früh eine Pumpe und einen Tank bauen, Deiche gegen die Flutwelle, und Hütten für die Stimmung.';
     const wonText =
       goal?.kind === 'stausee'
         ? `Der See in der Schlucht hält, ${stats.population} Otter leben an seinem Ufer. Ihr könnt weiterspielen oder zur nächsten Karte gehen.`
@@ -245,13 +406,16 @@ export class Menu {
       ['Vom Hochwasser verloren', `${stats.lostToFlood} Gebäude`],
       ['Zufriedenheit', `${Math.round(stats.mood * 100)} %`],
     ];
+    if (daily) rows.unshift(['Wertung', `${daily.score} Punkte`]);
     this.dialog(
       won ? 'Ziel erreicht' : 'Der Clan ist ausgelöscht',
-      `<p>${won ? wonText : 'Der letzte Otter ist gestorben. Beim nächsten Mal: früh eine Pumpe und einen Tank bauen, Deiche gegen die Flutwelle, und Hütten für die Stimmung.'}</p>
+      `<p>${won ? wonText : lostText}</p>
       <div class="end-stats">${rows.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('')}</div>
+      ${daily && !daily.submitted ? this.dailyRow(daily) : ''}
       <div class="btn-row">
         ${next ? `<button class="btn" data-act="play" data-id="${next.id}">${icon('trophy')}Nächste Karte: ${next.name}</button>` : ''}
         ${won ? `<button class="btn${next ? ' secondary' : ''}" data-act="resume">${icon('play')}Weiterspielen</button>` : `<button class="btn" data-act="retry">${icon('play')}Nochmal versuchen</button>`}
+        ${daily ? `<button class="btn secondary" data-act="daily-board">${icon('trophy')}Bestenliste</button>` : ''}
         <button class="btn secondary" data-act="main">${icon('menu')}Hauptmenü</button>
       </div>`,
       '',
@@ -286,11 +450,28 @@ export class Menu {
         this.cb.onResume();
         break;
       case 'back':
+        this.saveNameInput();
         if (this.back === 'start') this.showStart();
         else this.showMenu(null);
         break;
       case 'campaign':
         this.showCampaign();
+        break;
+      case 'daily':
+        this.board = null;
+        this.showDaily();
+        break;
+      case 'daily-board':
+        this.saveNameInput();
+        this.board = null;
+        this.showDaily();
+        break;
+      case 'daily-play':
+        this.saveNameInput();
+        this.cb.onNewGame(DAILY_ID, Number(dailyKey()), false);
+        break;
+      case 'daily-submit':
+        this.submitDaily();
         break;
       case 'play': {
         const sc = SCENARIOS[btn.dataset.id ?? ''];

@@ -48,6 +48,12 @@ Spielen: https://hjorven.github.io/Waterwake/
   Flutwellen vom ersten Jahr an, 30 Otter, Jahr 4) und Der große Clan (60 Otter,
   Jahr 5). Ein Sieg schaltet die nächste Karte frei, der Fortschritt bleibt im
   Browser. `?karte=schlucht` öffnet eine Karte direkt.
+- **M5, Teil 2: Tageskarte mit Bestenliste**: Jeden Tag eine neue Zufallskarte,
+  für alle Spieler dieselbe (Seed aus dem Datum nach Weltzeit). Es zählt, wie
+  lange der Clan durchhält: 10 Punkte je überstandenem Tag und 5 je Otter. Die
+  Wertung geht mit einem Spielernamen in die Bestenliste (Supabase-Tabelle
+  `ww_daily`, nur die beste des Tages zählt), zu sehen im Startmenü unter
+  Tageskarte. `?karte=tageskarte` öffnet die Karte von heute.
 
 ## Steuerung
 

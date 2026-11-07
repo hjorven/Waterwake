@@ -2,16 +2,19 @@ import * as THREE from 'three';
 import './style.css';
 import { BUILDINGS, type BuildingId } from './data/buildings';
 import { costText } from './data/goods';
-import { campaignIndex, freeScenario, OTTERTAL, scenarioById } from './data/maps';
+import { DAILY_ID, dailyScore } from './data/daily';
+import { campaignIndex, freeScenario, OTTERTAL, scenarioById, type Scenario } from './data/maps';
 import { TECH_FOR, TECHS, type TechId } from './data/tech';
-import { cloudConnect, cloudDelete, cloudDownload, cloudList, cloudUpload } from './online/cloud';
+import { cloudConnect, cloudDelete, cloudDownload, cloudHasAccount, cloudList, cloudUpload, dailyBoard, dailySubmit, type DailyResult } from './online/cloud';
 import {
   deleteLocalSave,
   listLocalSaves,
   loadCampaign,
+  loadName,
   loadSettings,
   markCampaignWon,
   readLocalSave,
+  saveName as savePlayerName,
   saveSettings,
   writeLocalSave,
   type Settings,
@@ -28,7 +31,7 @@ import type { SaveGame, SaveMeta } from './sim/save';
 import type { Outcome, Tool, Weather } from './sim/world';
 import SimWorker from './sim/worker?worker';
 import { Hud, type Mode } from './ui/hud';
-import { Menu } from './ui/menu';
+import { Menu, type DailyScore } from './ui/menu';
 
 const params = new URLSearchParams(location.search);
 const app = document.getElementById('app')!;
@@ -157,7 +160,7 @@ rig.heightAt = (x, z) => {
 let stats: SimStats | null = null;
 let running = false;
 let shownOutcome: Outcome = null;
-let pendingIntro: string | null = null;
+let pendingIntro: Scenario | null = null;
 let lastSaved: { slot: string; data: SaveGame; meta: SaveMeta } | null = null;
 buildMap(MAP_W, MAP_H);
 
@@ -183,7 +186,7 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
         menu.toast('Spielstand geladen.');
         setSpeed(1);
       } else if (pendingIntro) {
-        const sc = scenarioById(pendingIntro, 0);
+        const sc = pendingIntro;
         pendingIntro = null;
         if (sc.id !== 'frei') {
           setSpeed(0);
@@ -230,6 +233,7 @@ worker.onmessage = (e: MessageEvent<FromWorker>) => {
       if (stats.outcome !== shownOutcome) {
         shownOutcome = stats.outcome;
         if (stats.outcome === 'won' && campaignIndex(stats.scenario) >= 0) markCampaignWon(stats.scenario);
+        if (stats.outcome === 'lost' && stats.scenario === DAILY_ID) autoSubmitDaily();
         if (stats.outcome && !menu.open) {
           setSpeed(0);
           menu.showEnd(stats);
@@ -254,7 +258,7 @@ function setSpeed(s: number): void {
 
 function startGame(scenario: string, seed: number, freeBuild: boolean): void {
   const sc = scenario === 'frei' ? freeScenario(seed) : scenarioById(scenario, seed);
-  pendingIntro = sc.id;
+  pendingIntro = sc;
   running = false;
   send({ type: 'init', scenario: sc.id, seed: sc.seed, w: sc.w, h: sc.h, freeBuild, unlockAll: freeBuild || params.has('alles') });
   speed = 1;
@@ -312,6 +316,43 @@ function loadData(data: SaveGame): void {
 
 const cloudWaiters = new Map<number, { resolve: () => void; reject: (e: Error) => void }>();
 
+// --- Tageskarte ---------------------------------------------------------------
+/** Zuletzt in die Bestenliste eingetragene Wertung, damit der Knopf nicht doppelt erscheint */
+let dailyDone: { key: string; score: number } | null = null;
+
+function currentDaily(): DailyScore | null {
+  if (!stats || stats.scenario !== DAILY_ID) return null;
+  const key = String(stats.seed);
+  const days = stats.season.day - 1;
+  const score = dailyScore(days, stats.population);
+  return { key, score, days, population: stats.population, submitted: dailyDone !== null && dailyDone.key === key && dailyDone.score >= score };
+}
+
+async function submitDaily(name: string): Promise<DailyResult> {
+  const cur = currentDaily();
+  if (!cur) throw new Error('Es läuft kein Spiel auf der Tageskarte.');
+  const before = dailyDone;
+  dailyDone = { key: cur.key, score: cur.score };
+  try {
+    const r = await dailySubmit(cur.key, name, cur.score, cur.days, cur.population);
+    dailyDone = { key: cur.key, score: Math.max(r.score, cur.score) };
+    return r;
+  } catch (err) {
+    dailyDone = before;
+    throw err;
+  }
+}
+
+/** Beim Untergang auf der Tageskarte die Wertung von selbst eintragen, wenn Konto und Name schon da sind */
+function autoSubmitDaily(): void {
+  const name = loadName();
+  if (!name || !cloudHasAccount()) return;
+  submitDaily(name).then(
+    (r) => menu.toast(r.improved ? `Wertung eingetragen: ${r.score} Punkte, Platz ${r.rank} von ${r.total}.` : `Deine beste Wertung heute bleibt ${r.score} Punkte, Platz ${r.rank}.`),
+    (err: Error) => menu.toast(`Bestenliste: ${err.message}`, true),
+  );
+}
+
 const menu = new Menu(app, {
   onNewGame: (scenario, seed, freeBuild) => {
     menu.hide();
@@ -343,6 +384,11 @@ const menu = new Menu(app, {
   onCloudDelete: (slot) => cloudDelete(slot),
   getSettings: () => ({ ...settings }),
   campaignWon: () => loadCampaign(),
+  getName: () => loadName(),
+  setName: (name) => savePlayerName(name),
+  dailyBoard: (key) => dailyBoard(key),
+  dailyScore: () => currentDaily(),
+  onDailySubmit: (name) => submitDaily(name),
   onSettings: (s) => {
     Object.assign(settings, s);
     saveSettings(settings);
@@ -616,6 +662,7 @@ if (params.has('karte') || params.has('seed') || params.has('frei')) {
 // Für Browsertests
 (window as unknown as { __waterwake: unknown }).__waterwake = {
   getStats: () => stats,
+  getDaily: () => currentDaily(),
   getBuildings: () => buildings,
   setMode: (m: Mode) => hud.setMode(m),
   place: (id: BuildingId, x: number, y: number) => {

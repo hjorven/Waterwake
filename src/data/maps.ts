@@ -1,5 +1,6 @@
 import type { SeasonProfile } from '../sim/seasons';
 import type { ValleyParams } from '../sim/terrain';
+import { DAILY_ID, dailyKey, dailyScenario, isDayKey } from './daily';
 
 /** Spielziel einer Karte. Freies Spiel hat keins. */
 export type Goal =
@@ -155,7 +156,9 @@ export function freeScenario(seed: number, w = 96, h = 96): Scenario {
   };
 }
 
+/** Karte zu einer Kennung; die Tageskarte kommt aus dem Datum, das als Seed mitreist */
 export function scenarioById(id: string, seed: number): Scenario {
+  if (id === DAILY_ID) return dailyScenario(isDayKey(seed) ? String(seed) : dailyKey());
   return SCENARIOS[id] ?? freeScenario(seed);
 }
 
